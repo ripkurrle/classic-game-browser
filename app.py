@@ -12,6 +12,9 @@ import argparse
 import threading
 import webbrowser
 
+# Silence default GStreamer/WebKit pipeline debug noise unless explicitly set
+os.environ.setdefault('GST_DEBUG', '0')
+
 from server import run_server, app_state
 
 def find_free_port(start_port=8080):

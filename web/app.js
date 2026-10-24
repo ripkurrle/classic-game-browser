@@ -94,9 +94,6 @@
     saveDirBtn: document.getElementById('saveDirBtn'),
     dirInput: document.getElementById('dirInput'),
     dirStatusMsg: document.getElementById('dirStatusMsg'),
-
-    // Audio
-    audioPlayer: document.getElementById('audioPlayer'),
   };
 
   // Initialization
