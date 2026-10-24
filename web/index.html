@@ -166,6 +166,27 @@
           </div>
         </div>
 
+        <!-- Dedicated Pan & Edge Sliders Bar (visible when expanded picture overflows preview viewport) -->
+        <div class="pan-sliders-bar" id="panSlidersBar" style="display: none;">
+          <div class="pan-sliders-inner">
+            <div class="pan-slider-group" id="panXGroup">
+              <span class="pan-label">↔ Horizontal:</span>
+              <button class="pan-edge-btn" id="panLeftBtn" title="Jump to Left Edge">⇤ Left</button>
+              <input type="range" class="pan-range" id="panXSlider" min="0" max="100" value="50" title="Slide horizontally">
+              <button class="pan-edge-btn" id="panRightBtn" title="Jump to Right Edge">Right ⇥</button>
+            </div>
+
+            <div class="pan-slider-group" id="panYGroup">
+              <span class="pan-label">↕ Vertical:</span>
+              <button class="pan-edge-btn" id="panTopBtn" title="Jump to Top Edge">⇡ Top</button>
+              <input type="range" class="pan-range" id="panYSlider" min="0" max="100" value="50" title="Slide vertically">
+              <button class="pan-edge-btn" id="panBottomBtn" title="Jump to Bottom Edge">Bottom ⇣</button>
+            </div>
+
+            <button class="pan-edge-btn pan-center-btn" id="panCenterBtn" title="Center View">⊙ Center</button>
+          </div>
+        </div>
+
         <!-- Viewer Meta & Controls Drawer -->
         <div class="viewer-meta-drawer" id="viewerMetaDrawer">
           <div class="meta-chips" id="metaChips"></div>

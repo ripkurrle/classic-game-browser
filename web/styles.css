@@ -683,14 +683,52 @@ button, input, select {
 .viewer-stage {
   flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
   position: relative;
   overflow: auto;
-  padding: 24px;
+  padding: 0;
+  background: radial-gradient(circle at 50% 50%, rgba(20, 26, 42, 0.7) 0%, var(--bg-app) 100%);
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent-emerald) rgba(10, 14, 24, 0.85);
+}
+
+.viewer-stage.can-pan {
+  cursor: grab;
+}
+
+.viewer-stage.is-panning {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+/* Enhanced Viewport Sliders / Scrollbars */
+.viewer-stage::-webkit-scrollbar {
+  width: 13px;
+  height: 13px;
+}
+
+.viewer-stage::-webkit-scrollbar-track {
+  background: rgba(10, 14, 24, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.viewer-stage::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.6), rgba(99, 102, 241, 0.6));
+  border-radius: 6px;
+  border: 2px solid rgba(10, 14, 24, 0.9);
+  box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.6);
+}
+
+.viewer-stage::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(135deg, var(--accent-emerald), var(--accent-purple));
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.6);
+}
+
+.viewer-stage::-webkit-scrollbar-corner {
+  background: rgba(10, 14, 24, 0.95);
 }
 
 .empty-state {
+  margin: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -698,6 +736,7 @@ button, input, select {
   text-align: center;
   max-width: 440px;
   color: var(--text-muted);
+  padding: 24px;
 }
 
 .empty-icon {
@@ -718,6 +757,34 @@ button, input, select {
   line-height: 1.6;
 }
 
+/* CPS Background Stage & Canvas */
+.cps-viewport-stage {
+  margin: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  min-width: min-content;
+  min-height: min-content;
+}
+
+.cps-canvas-wrapper {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.75), 0 0 0 1px var(--border-subtle);
+  background: #000;
+  overflow: hidden;
+  user-select: none;
+}
+
+.cps-canvas-wrapper img {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
 /* Image Presentation Frame */
 .image-viewport-wrap {
   display: flex;
@@ -730,12 +797,12 @@ button, input, select {
   border: 1px solid var(--border-subtle);
   overflow: hidden;
   background: #000;
+  margin: auto;
 }
 
 .display-canvas {
   image-rendering: pixelated;
-  max-width: 100%;
-  height: auto;
+  image-rendering: crisp-edges;
   display: block;
 }
 
@@ -748,6 +815,122 @@ button, input, select {
               linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.04));
   background-size: 100% 3px, 6px 100%;
   pointer-events: none;
+}
+
+/* ==========================================================================
+   Edge Pan Sliders Bar (Zoom Navigation Controls)
+   ========================================================================== */
+.pan-sliders-bar {
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 10px 24px;
+  animation: slideDownIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideDownIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pan-sliders-inner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.pan-slider-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 250px;
+}
+
+.pan-label {
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-emerald-light);
+  white-space: nowrap;
+}
+
+.pan-edge-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.pan-edge-btn:hover {
+  background: rgba(16, 185, 129, 0.2);
+  color: #fff;
+  border-color: var(--accent-emerald);
+}
+
+.pan-center-btn {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.35);
+  color: #c7d2fe;
+}
+
+.pan-center-btn:hover {
+  background: rgba(99, 102, 241, 0.3);
+  border-color: var(--accent-purple);
+  color: #fff;
+}
+
+.pan-range {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.5);
+  outline: none;
+  cursor: ew-resize;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.pan-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-emerald), var(--accent-purple));
+  cursor: ew-resize;
+  border: 2px solid #fff;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.7);
+  transition: transform 0.1s ease;
+}
+
+.pan-range::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+}
+
+.pan-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-emerald), var(--accent-purple));
+  cursor: ew-resize;
+  border: 2px solid #fff;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.7);
 }
 
 /* Backdrop options for Sprites */

@@ -57,6 +57,16 @@
     metaChips: document.getElementById('metaChips'),
     interactiveControls: document.getElementById('interactiveControls'),
 
+    // Edge Pan Sliders
+    panSlidersBar: document.getElementById('panSlidersBar'),
+    panXSlider: document.getElementById('panXSlider'),
+    panYSlider: document.getElementById('panYSlider'),
+    panLeftBtn: document.getElementById('panLeftBtn'),
+    panRightBtn: document.getElementById('panRightBtn'),
+    panTopBtn: document.getElementById('panTopBtn'),
+    panBottomBtn: document.getElementById('panBottomBtn'),
+    panCenterBtn: document.getElementById('panCenterBtn'),
+
     // Counts
     countAll: document.getElementById('countAll'),
     countBg: document.getElementById('countBg'),
@@ -164,6 +174,10 @@
     el.closeDirModalBtn.addEventListener('click', () => el.dirModal.style.display = 'none');
     el.cancelDirModalBtn.addEventListener('click', () => el.dirModal.style.display = 'none');
     el.saveDirBtn.addEventListener('click', saveDirectory);
+
+    // Pan Sliders & Drag to Pan
+    setupPanSliders();
+    setupDragToPan();
   }
 
   // API Calls
@@ -350,8 +364,10 @@
     `;
 
     el.viewerStage.innerHTML = `
-      <div class="image-viewport-wrap ${state.scanlinesActive ? 'crt-overlay' : ''}" id="imgWrap">
-        <img id="stageImg" src="${previewUrl}" class="display-canvas" style="transform: ${getZoomStyle()}" alt="${asset.name}">
+      <div class="cps-viewport-stage" id="cpsViewportStage">
+        <div class="cps-canvas-wrapper ${state.scanlinesActive ? 'crt-overlay' : ''}" id="imgWrap">
+          <img id="stageImg" src="${previewUrl}" class="display-canvas" alt="${asset.name}">
+        </div>
       </div>
     `;
 
@@ -363,13 +379,14 @@
       <div class="meta-chip">File Size: <strong>${formatBytes(asset.size)}</strong></div>
     `;
 
-    // Interactive controls: Zoom & CRT scanlines
+    // Interactive controls: Multiplier buttons & CRT scanlines
     el.interactiveControls.innerHTML = `
-      <div class="ctrl-btn-group">
-        <button class="ctrl-btn ${state.zoomLevel === 'fit' ? 'active' : ''}" data-zoom="fit">Fit</button>
-        <button class="ctrl-btn ${state.zoomLevel === 1 ? 'active' : ''}" data-zoom="1">1x</button>
-        <button class="ctrl-btn ${state.zoomLevel === 2 ? 'active' : ''}" data-zoom="2">2x</button>
-        <button class="ctrl-btn ${state.zoomLevel === 3 ? 'active' : ''}" data-zoom="3">3x</button>
+      <div class="ctrl-btn-group" title="Zoom Multiplier">
+        <button class="ctrl-btn ${state.zoomLevel === 'fit' ? 'active' : ''}" data-zoom="fit" title="Fit to Preview Window">Fit</button>
+        <button class="ctrl-btn ${state.zoomLevel === 1 ? 'active' : ''}" data-zoom="1" title="1x (320x200)">1x</button>
+        <button class="ctrl-btn ${state.zoomLevel === 2 ? 'active' : ''}" data-zoom="2" title="2x (640x400)">2x</button>
+        <button class="ctrl-btn ${state.zoomLevel === 3 ? 'active' : ''}" data-zoom="3" title="3x (960x600)">3x</button>
+        <button class="ctrl-btn ${state.zoomLevel === 4 ? 'active' : ''}" data-zoom="4" title="4x (1280x800)">4x</button>
       </div>
 
       <button id="toggleCrtBtn" class="btn btn-secondary ${state.scanlinesActive ? 'active' : ''}" style="font-size: 0.78rem;">
@@ -377,14 +394,56 @@
       </button>
     `;
 
+    function applyCpsZoom(level, centerView = false) {
+      state.zoomLevel = level;
+      const img = document.getElementById('stageImg');
+      const wrap = document.getElementById('imgWrap');
+      if (!img || !wrap) return;
+
+      el.interactiveControls.querySelectorAll('[data-zoom]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.zoom === String(level));
+      });
+
+      if (level === 'fit') {
+        wrap.style.width = '';
+        wrap.style.height = '';
+        img.style.width = '100%';
+        img.style.maxWidth = 'min(100%, calc((100vh - 280px) * 1.6))';
+        img.style.maxHeight = 'calc(100vh - 280px)';
+        img.style.height = 'auto';
+        img.style.aspectRatio = '320 / 200';
+      } else {
+        const mult = parseInt(level);
+        const w = 320 * mult;
+        const h = 200 * mult;
+        wrap.style.width = `${w}px`;
+        wrap.style.height = `${h}px`;
+        img.style.width = `${w}px`;
+        img.style.height = `${h}px`;
+        img.style.maxWidth = 'none';
+        img.style.maxHeight = 'none';
+        img.style.aspectRatio = '320 / 200';
+      }
+
+      requestAnimationFrame(() => {
+        if (centerView && level !== 'fit') {
+          const stage = el.viewerStage;
+          if (stage.scrollWidth > stage.clientWidth) {
+            stage.scrollLeft = (stage.scrollWidth - stage.clientWidth) / 2;
+          }
+          if (stage.scrollHeight > stage.clientHeight) {
+            stage.scrollTop = (stage.scrollHeight - stage.clientHeight) / 2;
+          }
+        }
+        updatePanSliders();
+      });
+    }
+
     // Zoom listeners
     el.interactiveControls.querySelectorAll('[data-zoom]').forEach(b => {
       b.addEventListener('click', (e) => {
-        state.zoomLevel = e.target.dataset.zoom === 'fit' ? 'fit' : parseInt(e.target.dataset.zoom);
-        el.interactiveControls.querySelectorAll('[data-zoom]').forEach(btn => btn.classList.remove('active'));
-        e.target.classList.add('active');
-        const img = document.getElementById('stageImg');
-        if (img) img.style.transform = getZoomStyle();
+        const targetZoom = e.target.dataset.zoom === 'fit' ? 'fit' : parseInt(e.target.dataset.zoom);
+        applyCpsZoom(targetZoom, true);
       });
     });
 
@@ -408,6 +467,16 @@
       });
       el.metaChips.appendChild(palWrap);
     }
+
+    const stageImg = document.getElementById('stageImg');
+    if (stageImg) {
+      stageImg.onload = () => {
+        updatePanSliders();
+      };
+    }
+
+    // Apply active zoom sizing immediately
+    applyCpsZoom(state.zoomLevel, false);
   }
 
   // 2. Model & Character Viewer (.SHP)
@@ -795,6 +864,152 @@
     clearInterval(state.animTimer);
     state.animPlaying = false;
     cancelAnimationFrame(state.audioVisualizerTimer);
+
+    if (el.panSlidersBar) {
+      el.panSlidersBar.style.display = 'none';
+    }
+    if (el.viewerStage) {
+      el.viewerStage.classList.remove('can-pan');
+    }
+  }
+
+  // Pan Sliders & Viewport Navigation
+  function setupPanSliders() {
+    const stage = el.viewerStage;
+    if (!stage || !el.panSlidersBar) return;
+
+    // Horizontal range input
+    el.panXSlider.addEventListener('input', (e) => {
+      const maxX = stage.scrollWidth - stage.clientWidth;
+      if (maxX > 0) {
+        stage.scrollLeft = (parseFloat(e.target.value) / 100) * maxX;
+      }
+    });
+
+    // Vertical range input
+    el.panYSlider.addEventListener('input', (e) => {
+      const maxY = stage.scrollHeight - stage.clientHeight;
+      if (maxY > 0) {
+        stage.scrollTop = (parseFloat(e.target.value) / 100) * maxY;
+      }
+    });
+
+    // Edge navigation buttons
+    el.panLeftBtn.addEventListener('click', () => {
+      stage.scrollTo({ left: 0, behavior: 'smooth' });
+    });
+    el.panRightBtn.addEventListener('click', () => {
+      stage.scrollTo({ left: stage.scrollWidth - stage.clientWidth, behavior: 'smooth' });
+    });
+    el.panTopBtn.addEventListener('click', () => {
+      stage.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    el.panBottomBtn.addEventListener('click', () => {
+      stage.scrollTo({ top: stage.scrollHeight - stage.clientHeight, behavior: 'smooth' });
+    });
+    el.panCenterBtn.addEventListener('click', () => {
+      stage.scrollTo({
+        left: Math.max(0, (stage.scrollWidth - stage.clientWidth) / 2),
+        top: Math.max(0, (stage.scrollHeight - stage.clientHeight) / 2),
+        behavior: 'smooth'
+      });
+    });
+
+    // Sync sliders on stage scroll
+    stage.addEventListener('scroll', () => {
+      if (el.panSlidersBar.style.display === 'none') return;
+      const maxX = stage.scrollWidth - stage.clientWidth;
+      const maxY = stage.scrollHeight - stage.clientHeight;
+      if (maxX > 0 && document.activeElement !== el.panXSlider) {
+        el.panXSlider.value = Math.round((stage.scrollLeft / maxX) * 100);
+      }
+      if (maxY > 0 && document.activeElement !== el.panYSlider) {
+        el.panYSlider.value = Math.round((stage.scrollTop / maxY) * 100);
+      }
+    });
+
+    window.addEventListener('resize', () => {
+      if (state.selectedAsset && state.selectedAsset.ext === '.CPS') {
+        updatePanSliders();
+      }
+    });
+  }
+
+  function updatePanSliders() {
+    const stage = el.viewerStage;
+    if (!stage || !el.panSlidersBar) return;
+    if (!state.selectedAsset || state.selectedAsset.ext !== '.CPS') {
+      el.panSlidersBar.style.display = 'none';
+      stage.classList.remove('can-pan');
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      const maxX = stage.scrollWidth - stage.clientWidth;
+      const maxY = stage.scrollHeight - stage.clientHeight;
+      const hasOverflowX = maxX > 6;
+      const hasOverflowY = maxY > 6;
+      const hasOverflow = hasOverflowX || hasOverflowY;
+
+      if (hasOverflow) {
+        el.panSlidersBar.style.display = 'block';
+        const panXGroup = document.getElementById('panXGroup');
+        const panYGroup = document.getElementById('panYGroup');
+        if (panXGroup) panXGroup.style.display = hasOverflowX ? 'flex' : 'none';
+        if (panYGroup) panYGroup.style.display = hasOverflowY ? 'flex' : 'none';
+
+        if (hasOverflowX) {
+          el.panXSlider.value = maxX > 0 ? Math.round((stage.scrollLeft / maxX) * 100) : 0;
+        }
+        if (hasOverflowY) {
+          el.panYSlider.value = maxY > 0 ? Math.round((stage.scrollTop / maxY) * 100) : 0;
+        }
+        stage.classList.add('can-pan');
+      } else {
+        el.panSlidersBar.style.display = 'none';
+        stage.classList.remove('can-pan');
+      }
+    });
+  }
+
+  function setupDragToPan() {
+    const stage = el.viewerStage;
+    if (!stage) return;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startScrollLeft = 0;
+    let startScrollTop = 0;
+
+    stage.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || e.target.closest('button, input, select, a')) return;
+      const maxX = stage.scrollWidth - stage.clientWidth;
+      const maxY = stage.scrollHeight - stage.clientHeight;
+      if (maxX <= 6 && maxY <= 6) return;
+
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      startScrollLeft = stage.scrollLeft;
+      startScrollTop = stage.scrollTop;
+      stage.classList.add('is-panning');
+      e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      stage.scrollLeft = startScrollLeft - dx;
+      stage.scrollTop = startScrollTop - dy;
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (isDragging) {
+        isDragging = false;
+        stage.classList.remove('is-panning');
+      }
+    });
   }
 
   // Batch Export Operations
