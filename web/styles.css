@@ -487,6 +487,119 @@ button, input, select {
   border-color: rgba(16, 185, 129, 0.3);
 }
 
+/* Sidebar Sorting Bar */
+.sidebar-sort-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--bg-surface-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  gap: 8px;
+}
+
+.sort-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sort-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.sort-pill-group {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border-subtle);
+}
+
+.sort-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  line-height: 1;
+}
+
+.sort-pill-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.sort-pill-btn.active {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.45);
+  color: var(--accent-emerald-light);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.25);
+}
+
+.sort-arrow {
+  font-size: 0.8rem;
+  font-weight: 700;
+  opacity: 0.6;
+  transition: transform var(--transition-fast);
+}
+
+.sort-pill-btn.active .sort-arrow {
+  opacity: 1;
+  color: var(--accent-emerald-light);
+}
+
+.sort-select-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.sort-select {
+  padding: 4px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  outline: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  max-width: 145px;
+}
+
+.sort-select:focus,
+.sort-select:hover {
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+}
+
+.asset-size-badge {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  transition: all var(--transition-fast);
+}
+
+.asset-size-badge.highlight-size {
+  color: var(--accent-emerald-light);
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(16, 185, 129, 0.3);
+}
+
 .asset-list-container {
   flex: 1;
   overflow-y: auto;

@@ -32,7 +32,25 @@
 
     audioVisualizerTimer: null,
     batchPollTimer: null,
+
+    // Per-asset-type sort preferences (by: 'name'|'size', order: 'asc'|'desc')
+    sortPreferences: {
+      all: { by: 'name', order: 'asc' },
+      backgrounds: { by: 'name', order: 'asc' },
+      models: { by: 'name', order: 'asc' },
+      soundtracks: { by: 'name', order: 'asc' },
+      animations: { by: 'name', order: 'asc' },
+      sfx: { by: 'name', order: 'asc' },
+    },
   };
+
+  // Restore saved sort preferences from localStorage
+  try {
+    const savedSort = localStorage.getItem('kyrandia_sort_prefs');
+    if (savedSort) {
+      Object.assign(state.sortPreferences, JSON.parse(savedSort));
+    }
+  } catch (_) {}
 
   // DOM Elements
   const el = {
@@ -47,6 +65,13 @@
     filteredCountLabel: document.getElementById('filteredCountLabel'),
     viewGridBtn: document.getElementById('viewGridBtn'),
     viewListBtn: document.getElementById('viewListBtn'),
+
+    // Sorting Controls
+    sortByNameBtn: document.getElementById('sortByNameBtn'),
+    sortBySizeBtn: document.getElementById('sortBySizeBtn'),
+    sortNameArrow: document.getElementById('sortNameArrow'),
+    sortSizeArrow: document.getElementById('sortSizeArrow'),
+    assetSortSelect: document.getElementById('assetSortSelect'),
 
     // Viewer
     viewerStage: document.getElementById('viewerStage'),
@@ -98,6 +123,7 @@
 
   // Initialization
   async function init() {
+    updateSortControlsUI();
     setupEventListeners();
     await loadStatus();
     await loadAssets();
@@ -111,7 +137,34 @@
       document.querySelectorAll('.cat-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
       state.currentCategory = tab.dataset.category;
+      updateSortControlsUI();
       loadAssets();
+    });
+
+    // Sorting Controls
+    el.sortByNameBtn.addEventListener('click', () => {
+      const curr = getCurrentSort();
+      if (curr.by === 'name') {
+        setSort('name', curr.order === 'asc' ? 'desc' : 'asc');
+      } else {
+        setSort('name', curr.order || 'asc');
+      }
+    });
+
+    el.sortBySizeBtn.addEventListener('click', () => {
+      const curr = getCurrentSort();
+      if (curr.by === 'size') {
+        setSort('size', curr.order === 'desc' ? 'asc' : 'desc');
+      } else {
+        setSort('size', 'desc'); // Default to Largest first when switching to Size
+      }
+    });
+
+    el.assetSortSelect.addEventListener('change', (e) => {
+      const parts = e.target.value.split('_');
+      if (parts.length === 2) {
+        setSort(parts[0], parts[1]);
+      }
     });
 
     // Search Input
@@ -211,6 +264,81 @@
     }
   }
 
+  // Sort State & Preference Helpers
+  function getCurrentSort() {
+    const cat = state.currentCategory || 'all';
+    if (!state.sortPreferences[cat]) {
+      state.sortPreferences[cat] = { by: 'name', order: 'asc' };
+    }
+    return state.sortPreferences[cat];
+  }
+
+  function setSort(by, order) {
+    const cat = state.currentCategory || 'all';
+    state.sortPreferences[cat] = { by, order };
+    try {
+      localStorage.setItem('kyrandia_sort_prefs', JSON.stringify(state.sortPreferences));
+    } catch (_) {}
+    updateSortControlsUI();
+    sortAndRenderAssets();
+  }
+
+  function updateSortControlsUI() {
+    const { by, order } = getCurrentSort();
+
+    if (el.sortByNameBtn && el.sortBySizeBtn) {
+      el.sortByNameBtn.classList.toggle('active', by === 'name');
+      el.sortBySizeBtn.classList.toggle('active', by === 'size');
+
+      if (el.sortNameArrow) {
+        el.sortNameArrow.textContent = (by === 'name' && order === 'desc') ? '↓' : '↑';
+      }
+      if (el.sortSizeArrow) {
+        el.sortSizeArrow.textContent = (by === 'size' && order === 'asc') ? '↑' : '↓';
+      }
+
+      el.sortByNameBtn.title = by === 'name'
+        ? `Sort by Name (${order === 'asc' ? 'A → Z, click for Z → A' : 'Z → A, click for A → Z'})`
+        : 'Sort by Name (A → Z)';
+
+      el.sortBySizeBtn.title = by === 'size'
+        ? `Sort by Size (${order === 'desc' ? 'Largest first, click for Smallest first' : 'Smallest first, click for Largest first'})`
+        : 'Sort by File Size (Largest first)';
+    }
+
+    if (el.assetSortSelect) {
+      el.assetSortSelect.value = `${by}_${order}`;
+    }
+
+    if (el.assetListHeading) {
+      const titles = {
+        all: 'All Assets',
+        backgrounds: 'Backgrounds',
+        models: 'Models & Sprites',
+        soundtracks: 'MIDI Soundtracks',
+        animations: 'Animations',
+        sfx: 'Voices & SFX',
+      };
+      el.assetListHeading.textContent = titles[state.currentCategory] || 'Assets';
+    }
+  }
+
+  function sortAndRenderAssets() {
+    const { by, order } = getCurrentSort();
+    state.assets.sort((a, b) => {
+      if (by === 'size') {
+        const diff = a.size - b.size;
+        if (diff !== 0) return order === 'desc' ? -diff : diff;
+        return a.name.localeCompare(b.name);
+      } else {
+        const cmp = a.name.localeCompare(b.name);
+        if (cmp !== 0) return order === 'desc' ? -cmp : cmp;
+        return a.size - b.size;
+      }
+    });
+    renderAssetList();
+  }
+
   async function loadAssets() {
     el.assetList.innerHTML = `
       <div class="loading-state">
@@ -220,17 +348,20 @@
     `;
 
     try {
+      const { by, order } = getCurrentSort();
       const params = new URLSearchParams({
         category: state.currentCategory,
         pak: state.currentPak,
         q: state.searchQuery,
+        sort: by,
+        order: order,
       });
 
       const res = await fetch(`/api/assets?${params}`);
       const data = await res.json();
       state.assets = data.assets || [];
 
-      renderAssetList();
+      sortAndRenderAssets();
 
       // If nothing selected or selection not in results, select first item
       if (state.assets.length > 0) {
@@ -261,6 +392,7 @@
 
     el.assetList.innerHTML = '';
     const frag = document.createDocumentFragment();
+    const isSizeSort = getCurrentSort().by === 'size';
 
     state.assets.forEach(asset => {
       const card = document.createElement('div');
@@ -291,7 +423,7 @@
           <span class="asset-card-title" title="${asset.name}">${asset.name}</span>
           <div class="asset-card-meta">
             <span class="asset-ext-badge ${extClass}">${asset.ext.replace('.', '')}</span>
-            <span>${formatBytes(asset.size)}</span>
+            <span class="asset-size-badge ${isSizeSort ? 'highlight-size' : ''}">${formatBytes(asset.size)}</span>
             <span>• ${asset.pak_name}</span>
           </div>
         </div>

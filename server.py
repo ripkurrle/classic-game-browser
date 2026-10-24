@@ -200,6 +200,8 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             category = query.get('category', ['all'])[0].lower()
             pak_filter = query.get('pak', [''])[0].upper()
             search = query.get('q', [''])[0].lower()
+            sort_by = query.get('sort', ['name'])[0].lower()
+            sort_order = query.get('order', ['asc'])[0].lower()
 
             entries = app_state.repo.all_entries
 
@@ -221,6 +223,11 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
 
             if search:
                 entries = [e for e in entries if search in e.name.lower() or search in e.pak_name.lower()]
+
+            if sort_by == 'size':
+                entries = sorted(entries, key=lambda e: (e.size, e.name.upper()), reverse=(sort_order == 'desc'))
+            else:
+                entries = sorted(entries, key=lambda e: (e.name.upper(), e.size), reverse=(sort_order == 'desc'))
 
             results = [e.to_dict() for e in entries]
             self.send_json_response({'count': len(results), 'assets': results})

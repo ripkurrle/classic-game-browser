@@ -127,6 +127,31 @@
           </div>
         </div>
 
+        <!-- Sidebar Sorting Bar -->
+        <div class="sidebar-sort-bar">
+          <div class="sort-bar-left">
+            <span class="sort-label">Sort:</span>
+            <div class="sort-pill-group">
+              <button id="sortByNameBtn" class="sort-pill-btn active" title="Sort by Name (A → Z)">
+                <span>Name</span>
+                <span id="sortNameArrow" class="sort-arrow">↑</span>
+              </button>
+              <button id="sortBySizeBtn" class="sort-pill-btn" title="Sort by File Size (Largest first)">
+                <span>Size</span>
+                <span id="sortSizeArrow" class="sort-arrow">↓</span>
+              </button>
+            </div>
+          </div>
+          <div class="sort-select-wrapper">
+            <select id="assetSortSelect" class="sort-select" title="Sort order">
+              <option value="name_asc">Name (A → Z)</option>
+              <option value="name_desc">Name (Z → A)</option>
+              <option value="size_desc">Size (Largest first)</option>
+              <option value="size_asc">Size (Smallest first)</option>
+            </select>
+          </div>
+        </div>
+
         <div class="asset-list-container" id="assetList">
           <div class="loading-state">
             <div class="spinner"></div>
