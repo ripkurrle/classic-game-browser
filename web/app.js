@@ -41,7 +41,9 @@
       soundtracks: { by: 'name', order: 'asc' },
       animations: { by: 'name', order: 'asc' },
       sfx: { by: 'name', order: 'asc' },
+      palettes: { by: 'name', order: 'asc' },
     },
+    paletteSwatchSize: 'size-md',
   };
 
   // Restore saved sort preferences from localStorage
@@ -99,6 +101,7 @@
     countMidi: document.getElementById('countMidi'),
     countAnim: document.getElementById('countAnim'),
     countSfx: document.getElementById('countSfx'),
+    countPalettes: document.getElementById('countPalettes'),
 
     // Batch Export Modal
     batchExportBtn: document.getElementById('batchExportBtn'),
@@ -247,6 +250,9 @@
         el.countMidi.textContent = data.counts.soundtracks.toLocaleString();
         el.countAnim.textContent = data.counts.animations.toLocaleString();
         el.countSfx.textContent = data.counts.sfx.toLocaleString();
+        if (el.countPalettes && data.counts.palettes !== undefined) {
+          el.countPalettes.textContent = data.counts.palettes.toLocaleString();
+        }
       }
 
       // Populate PAK dropdown
@@ -318,6 +324,7 @@
         soundtracks: 'MIDI Soundtracks',
         animations: 'Animations',
         sfx: 'Voices & SFX',
+        palettes: 'Color Palettes (.COL)',
       };
       el.assetListHeading.textContent = titles[state.currentCategory] || 'Assets';
     }
@@ -409,6 +416,8 @@
         thumbHtml = `<img src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=0" class="asset-thumbnail" loading="lazy" alt="${asset.name}">`;
       } else if (asset.ext === '.WSA') {
         thumbHtml = `<img src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=0" class="asset-thumbnail" loading="lazy" alt="${asset.name}">`;
+      } else if (asset.ext === '.COL' || asset.ext === '.PAL') {
+        thumbHtml = `<img src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&cell=2" class="asset-thumbnail" loading="lazy" alt="${asset.name}">`;
       } else if (asset.ext === '.XMI') {
         thumbHtml = `<span class="asset-placeholder-icon">🎵</span>`;
       } else if (asset.ext === '.VOC') {
@@ -467,6 +476,8 @@
       renderModelViewer(asset, state.selectedDetails);
     } else if (asset.ext === '.WSA') {
       renderAnimationViewer(asset, state.selectedDetails);
+    } else if (asset.ext === '.COL' || asset.ext === '.PAL') {
+      renderPaletteViewer(asset, state.selectedDetails);
     } else if (asset.ext === '.XMI') {
       renderMidiViewer(asset, state.selectedDetails);
     } else if (asset.ext === '.VOC') {
@@ -1036,7 +1047,262 @@
     el.interactiveControls.innerHTML = '';
   }
 
-  // 6. Raw File Fallback
+  // 6. Palette Viewer (.COL / .PAL)
+  function renderPaletteViewer(asset, details) {
+    const baseName = asset.name.replace(/\.(COL|PAL)$/i, '');
+    const exportPngUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&format=png`;
+    const exportGplUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&format=gpl`;
+    const exportPalUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&format=pal`;
+    const exportRawUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&format=col`;
+
+    // Action buttons in viewer header
+    el.viewerActions.innerHTML = `
+      <a href="${exportPngUrl}" download="${baseName}_palette.png" class="btn btn-primary glow-btn" title="Download 16x16 swatch PNG">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        <span>Export PNG Swatches</span>
+      </a>
+      <a href="${exportGplUrl}" download="${baseName}.gpl" class="btn btn-secondary" title="GIMP / Aseprite / Photoshop palette file">
+        <span>Export GPL (Aseprite)</span>
+      </a>
+      <a href="${exportPalUrl}" download="${baseName}.pal" class="btn btn-secondary" title="JASC-PAL file">
+        <span>Export JASC-PAL</span>
+      </a>
+      <a href="${exportRawUrl}" download="${asset.name}" class="btn btn-secondary" title="Download raw binary file">
+        <span>Raw ${asset.ext}</span>
+      </a>
+    `;
+
+    // Make sure colors array exists (256 items)
+    let colors = details.colors || [];
+    if (!colors || colors.length === 0) {
+      colors = [];
+      for (let i = 0; i < 256; i++) {
+        colors.push({
+          index: i,
+          hex: `#${i.toString(16).padStart(2, '0').repeat(3)}`,
+          r: i, g: i, b: i,
+          dac_r: i >> 2, dac_g: i >> 2, dac_b: i >> 2,
+        });
+      }
+    }
+
+    // Build gradient string for the continuous spectrum bar
+    const gradientStops = colors.filter((_, idx) => idx % 8 === 0 || idx === 255)
+      .map(c => c.hex)
+      .join(', ');
+
+    // Selected color index
+    let activeIdx = 0;
+
+    // Render Stage HTML
+    el.viewerStage.innerHTML = `
+      <div class="palette-studio-wrap">
+        <div class="palette-card-main">
+          <div class="palette-grid-header">
+            <div class="palette-grid-title">
+              <span>🎨</span>
+              <span>256 VGA Color Swatches (16×16)</span>
+            </div>
+            <span class="palette-grid-subtitle">Hover / click swatch to inspect & copy</span>
+          </div>
+
+          <div class="palette-grid ${state.paletteSwatchSize || 'size-md'}" id="paletteGrid">
+            ${colors.map((c, i) => `
+              <button class="palette-swatch ${i === activeIdx ? 'active' : ''}" 
+                style="background-color: ${c.hex};" 
+                data-index="${i}" 
+                title="Index ${i} (${c.hex})"
+                aria-label="Color ${i}: ${c.hex}"></button>
+            `).join('')}
+          </div>
+
+          <div class="palette-spectrum-wrap">
+            <span class="palette-spectrum-label">Color Ramp Spectrum</span>
+            <div class="palette-spectrum-bar" style="background: linear-gradient(to right, ${gradientStops});"></div>
+          </div>
+        </div>
+
+        <!-- Palette Inspector Panel -->
+        <div class="palette-inspector">
+          <div class="palette-inspector-title">Color Inspector</div>
+          
+          <div class="inspector-swatch-box" id="inspBox" style="background-color: ${colors[activeIdx].hex};">
+            <span class="inspector-swatch-label" id="inspLabel">${colors[activeIdx].hex}</span>
+          </div>
+
+          <div class="inspector-data-list">
+            <div class="inspector-data-row">
+              <span class="inspector-key">Palette Index</span>
+              <span class="inspector-val" id="inspIndex">#0 (0x00)</span>
+            </div>
+            <div class="inspector-data-row">
+              <span class="inspector-key">Hex Color</span>
+              <span class="inspector-val">
+                <span id="inspHex">${colors[activeIdx].hex}</span>
+                <button class="copy-mini-btn" id="copyHexBtn" title="Copy Hex Code">📋</button>
+              </span>
+            </div>
+            <div class="inspector-data-row">
+              <span class="inspector-key">RGB (8-bit)</span>
+              <span class="inspector-val">
+                <span id="inspRgb">rgb(${colors[activeIdx].r}, ${colors[activeIdx].g}, ${colors[activeIdx].b})</span>
+                <button class="copy-mini-btn" id="copyRgbBtn" title="Copy RGB">📋</button>
+              </span>
+            </div>
+            <div class="inspector-data-row">
+              <span class="inspector-key">VGA DAC (6-bit)</span>
+              <span class="inspector-val" id="inspDac">(${colors[activeIdx].dac_r}, ${colors[activeIdx].dac_g}, ${colors[activeIdx].dac_b})</span>
+            </div>
+          </div>
+
+          <div class="contrast-test-box">
+            <div class="contrast-pill" id="inspContrastDark" style="background-color: ${colors[activeIdx].hex}; color: #000;">Dark Text</div>
+            <div class="contrast-pill" id="inspContrastLight" style="background-color: ${colors[activeIdx].hex}; color: #fff;">Light Text</div>
+          </div>
+
+          <button class="btn btn-secondary" id="copyCssVarsBtn" style="width: 100%; font-size: 0.78rem;">
+            <span>📋 Copy 256 CSS Variables</span>
+          </button>
+        </div>
+      </div>
+    `;
+
+    // Metadata chips
+    el.metaChips.innerHTML = `
+      <div class="meta-chip">Total Colors: <strong>256 VGA Colors</strong></div>
+      <div class="meta-chip">DAC Bit Depth: <strong>6-bit DAC (0-63) → 8-bit RGB</strong></div>
+      <div class="meta-chip">Compression: <strong>${details.compression || 'Format 80 (LCW)'}</strong></div>
+      <div class="meta-chip">File Size: <strong>${formatBytes(asset.size)}</strong></div>
+      <div class="meta-chip">Archive: <strong>${asset.pak_name}</strong></div>
+    `;
+
+    // Interactive controls: Swatch size buttons
+    el.interactiveControls.innerHTML = `
+      <div class="ctrl-btn-group" title="Swatch Size">
+        <button class="ctrl-btn ${state.paletteSwatchSize === 'size-sm' ? 'active' : ''}" data-size="size-sm">Small</button>
+        <button class="ctrl-btn ${(!state.paletteSwatchSize || state.paletteSwatchSize === 'size-md') ? 'active' : ''}" data-size="size-md">Medium</button>
+        <button class="ctrl-btn ${state.paletteSwatchSize === 'size-lg' ? 'active' : ''}" data-size="size-lg">Large</button>
+      </div>
+    `;
+
+    // Interactive sizing listeners
+    el.interactiveControls.querySelectorAll('.ctrl-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        el.interactiveControls.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.paletteSwatchSize = btn.dataset.size;
+        const grid = document.getElementById('paletteGrid');
+        if (grid) {
+          grid.className = `palette-grid ${state.paletteSwatchSize}`;
+        }
+      });
+    });
+
+    // Inspector Updater Function
+    function updateInspector(idx) {
+      activeIdx = idx;
+      const c = colors[idx];
+      if (!c) return;
+
+      const inspBox = document.getElementById('inspBox');
+      const inspLabel = document.getElementById('inspLabel');
+      const inspIndex = document.getElementById('inspIndex');
+      const inspHex = document.getElementById('inspHex');
+      const inspRgb = document.getElementById('inspRgb');
+      const inspDac = document.getElementById('inspDac');
+      const inspContrastDark = document.getElementById('inspContrastDark');
+      const inspContrastLight = document.getElementById('inspContrastLight');
+
+      if (inspBox) inspBox.style.backgroundColor = c.hex;
+      if (inspLabel) inspLabel.textContent = c.hex;
+      if (inspIndex) inspIndex.textContent = `#${c.index} (0x${c.index.toString(16).toUpperCase().padStart(2, '0')})`;
+      if (inspHex) inspHex.textContent = c.hex;
+      if (inspRgb) inspRgb.textContent = `rgb(${c.r}, ${c.g}, ${c.b})`;
+      if (inspDac) inspDac.textContent = `(${c.dac_r}, ${c.dac_g}, ${c.dac_b})`;
+      if (inspContrastDark) inspContrastDark.style.backgroundColor = c.hex;
+      if (inspContrastLight) inspContrastLight.style.backgroundColor = c.hex;
+
+      // Update active swatch highlight
+      const grid = document.getElementById('paletteGrid');
+      if (grid) {
+        grid.querySelectorAll('.palette-swatch').forEach(s => {
+          s.classList.toggle('active', parseInt(s.dataset.index, 10) === idx);
+        });
+      }
+    }
+
+    // Grid swatch event listeners
+    const grid = document.getElementById('paletteGrid');
+    if (grid) {
+      grid.addEventListener('mouseover', (e) => {
+        const swatch = e.target.closest('.palette-swatch');
+        if (!swatch) return;
+        const idx = parseInt(swatch.dataset.index, 10);
+        updateInspector(idx);
+      });
+
+      grid.addEventListener('click', (e) => {
+        const swatch = e.target.closest('.palette-swatch');
+        if (!swatch) return;
+        const idx = parseInt(swatch.dataset.index, 10);
+        updateInspector(idx);
+      });
+    }
+
+    // Copy Hex button
+    const copyHexBtn = document.getElementById('copyHexBtn');
+    if (copyHexBtn) {
+      copyHexBtn.addEventListener('click', () => {
+        const hex = colors[activeIdx].hex;
+        navigator.clipboard.writeText(hex).then(() => {
+          copyHexBtn.textContent = '✓';
+          copyHexBtn.classList.add('copied');
+          setTimeout(() => {
+            copyHexBtn.textContent = '📋';
+            copyHexBtn.classList.remove('copied');
+          }, 1200);
+        });
+      });
+    }
+
+    // Copy RGB button
+    const copyRgbBtn = document.getElementById('copyRgbBtn');
+    if (copyRgbBtn) {
+      copyRgbBtn.addEventListener('click', () => {
+        const rgb = `rgb(${colors[activeIdx].r}, ${colors[activeIdx].g}, ${colors[activeIdx].b})`;
+        navigator.clipboard.writeText(rgb).then(() => {
+          copyRgbBtn.textContent = '✓';
+          copyRgbBtn.classList.add('copied');
+          setTimeout(() => {
+            copyRgbBtn.textContent = '📋';
+            copyRgbBtn.classList.remove('copied');
+          }, 1200);
+        });
+      });
+    }
+
+    // Copy 256 CSS variables
+    const copyCssVarsBtn = document.getElementById('copyCssVarsBtn');
+    if (copyCssVarsBtn) {
+      copyCssVarsBtn.addEventListener('click', () => {
+        const cssLines = [':root {'];
+        colors.forEach(c => {
+          cssLines.push(`  --k2-pal-${c.index}: ${c.hex}; /* rgb(${c.r}, ${c.g}, ${c.b}) */`);
+        });
+        cssLines.push('}');
+        const text = cssLines.join('\n');
+        navigator.clipboard.writeText(text).then(() => {
+          const original = copyCssVarsBtn.innerHTML;
+          copyCssVarsBtn.innerHTML = '<span>✓ Copied 256 CSS Variables!</span>';
+          setTimeout(() => {
+            copyCssVarsBtn.innerHTML = original;
+          }, 2000);
+        });
+      });
+    }
+  }
+
+  // 7. Raw File Fallback
   function renderRawViewer(asset, details) {
     const exportUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}`;
     el.viewerActions.innerHTML = `

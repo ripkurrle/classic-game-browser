@@ -3,10 +3,12 @@ Desktop Backend HTTP Server and REST API for Kyrandia 2 Classic Game Browser.
 """
 
 import os
+import io
 import json
 import urllib.parse
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from typing import Optional, Any, Dict, Tuple
+from PIL import Image
 
 from core.pak import GameRepository
 from core.palette import PaletteManager
@@ -121,6 +123,15 @@ class KyrandiaState:
             self._frame_png_cache.pop(next(iter(self._frame_png_cache)))
         self._frame_png_cache[key] = sheet_bytes
         return sheet_bytes
+
+def render_palette_to_png(pal_bytes: bytes, cell_size: int = 16) -> bytes:
+    """Renders a 256-color palette (768 bytes RGB) as a 16x16 grid PNG image."""
+    base = Image.frombytes('RGB', (16, 16), pal_bytes[:768])
+    if cell_size > 1:
+        base = base.resize((16 * cell_size, 16 * cell_size), Image.Resampling.NEAREST)
+    out = io.BytesIO()
+    base.save(out, format='PNG')
+    return out.getvalue()
 
 app_state = KyrandiaState(DEFAULT_GAME_DIR)
 
@@ -301,6 +312,33 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 except Exception as ex:
                     details['error'] = str(ex)
 
+            elif entry.ext in ('.COL', '.PAL'):
+                try:
+                    raw = entry.read()
+                    pal_bytes = app_state.pal_manager._decode_palette_bytes(raw)
+                    colors = []
+                    for i in range(256):
+                        r = pal_bytes[i*3]
+                        g = pal_bytes[i*3 + 1]
+                        b = pal_bytes[i*3 + 2]
+                        colors.append({
+                            'index': i,
+                            'hex': f"#{r:02X}{g:02X}{b:02X}",
+                            'r': r,
+                            'g': g,
+                            'b': b,
+                            'dac_r': r >> 2,
+                            'dac_g': g >> 2,
+                            'dac_b': b >> 2,
+                        })
+                    details['colors'] = colors
+                    details['num_colors'] = 256
+                    details['is_compressed'] = len(raw) != 768
+                    details['compression'] = 'Format 80 (LCW)' if len(raw) != 768 else 'Uncompressed (768 bytes)'
+                    details['raw_size'] = len(raw)
+                except Exception as ex:
+                    details['error'] = str(ex)
+
             self.send_json_response(details)
 
         elif path == "/api/asset/preview":
@@ -338,6 +376,14 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                     else:
                         png_bytes = app_state.get_wsa_frame_png(entry.pak_name, entry.name, frame_idx)
                         self.send_bytes_response(png_bytes, 'image/png')
+
+                elif entry.ext in ('.COL', '.PAL'):
+                    raw = entry.read()
+                    pal_bytes = app_state.pal_manager._decode_palette_bytes(raw)
+                    cell_size = int(query.get('cell', ['16'])[0])
+                    cell_size = max(1, min(64, cell_size))
+                    png_bytes = render_palette_to_png(pal_bytes, cell_size)
+                    self.send_bytes_response(png_bytes, 'image/png')
 
                 elif entry.ext == '.XMI':
                     raw = entry.read()
@@ -393,6 +439,34 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                     else:
                         png_bytes = app_state.get_wsa_frame_png(entry.pak_name, entry.name, frame_idx)
                         self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_frame{frame_idx}.png", download=True)
+
+                elif entry.ext in ('.COL', '.PAL'):
+                    raw = entry.read()
+                    pal_bytes = app_state.pal_manager._decode_palette_bytes(raw)
+                    export_fmt = query.get('format', ['col'])[0].lower()
+                    if export_fmt == 'png':
+                        png_bytes = render_palette_to_png(pal_bytes, cell_size=16)
+                        self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_palette.png", download=True)
+                    elif export_fmt == 'gpl':
+                        lines = ["GIMP Palette", f"Name: {entry.name}", "Columns: 16", "#"]
+                        for i in range(256):
+                            r = pal_bytes[i*3]
+                            g = pal_bytes[i*3 + 1]
+                            b = pal_bytes[i*3 + 2]
+                            lines.append(f"{r:3d} {g:3d} {b:3d}  Index {i}")
+                        gpl_bytes = "\n".join(lines).encode('utf-8')
+                        self.send_bytes_response(gpl_bytes, 'text/plain', filename=f"{base_name}.gpl", download=True)
+                    elif export_fmt == 'pal':
+                        lines = ["JASC-PAL", "0100", "256"]
+                        for i in range(256):
+                            r = pal_bytes[i*3]
+                            g = pal_bytes[i*3 + 1]
+                            b = pal_bytes[i*3 + 2]
+                            lines.append(f"{r} {g} {b}")
+                        pal_file_bytes = "\n".join(lines).encode('utf-8')
+                        self.send_bytes_response(pal_file_bytes, 'text/plain', filename=f"{base_name}.pal", download=True)
+                    else:
+                        self.send_bytes_response(raw, 'application/octet-stream', filename=entry.name, download=True)
 
                 elif entry.ext == '.XMI':
                     raw = entry.read()
