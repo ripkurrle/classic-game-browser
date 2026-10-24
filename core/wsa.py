@@ -60,10 +60,26 @@ def decode_wsa(wsa_data: bytes, pal_manager: PaletteManager, pak_name: str = "",
     if width <= 0 or height <= 0 or width > 640 or height > 400 or num_frames == 0 or num_frames > 2000:
         return WsaAnimation(pak_name, asset_name, 0, 0, 0, 0, 0)
 
-    pos = 14
-    if pos + 4 > len(wsa_data):
+    table_start = 14
+    table_size = (num_frames + 2) * 4
+    table_end = table_start + table_size
+    if table_end > len(wsa_data):
         return WsaAnimation(pak_name, asset_name, 0, 0, 0, 0, 0)
 
+    offs_pal = 768 if (flags & 1) else 0
+    embedded_pal = None
+    if offs_pal and table_end + offs_pal <= len(wsa_data):
+        raw_pal = wsa_data[table_end : table_end + offs_pal]
+        max_v = max(raw_pal)
+        if max_v <= 63 and max_v > 0:
+            embedded_pal = bytes([(v << 2) | (v >> 4) for v in raw_pal])
+        else:
+            embedded_pal = raw_pal
+
+    frame_data_start = table_end + offs_pal
+    frame_data = wsa_data[frame_data_start:]
+
+    pos = table_start
     frame_data_offs = struct.unpack('<I', wsa_data[pos : pos + 4])[0]
     pos += 4
 
@@ -77,8 +93,10 @@ def decode_wsa(wsa_data: bytes, pal_manager: PaletteManager, pak_name: str = "",
             foff = max(0, foff - frame_data_offs)
         frame_offsets.append(foff)
 
-    frame_data = wsa_data[frame_data_offs:]
-    palette = pal_manager.get_palette_for_asset(pak_name, asset_name)
+    if embedded_pal is not None and len(embedded_pal) >= 768:
+        palette = embedded_pal
+    else:
+        palette = pal_manager.get_palette_for_asset(pak_name, asset_name)
 
     wsa_anim = WsaAnimation(pak_name, asset_name, num_frames, width, height, x_add, y_add)
     frame_buf = bytearray(width * height)

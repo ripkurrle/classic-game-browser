@@ -218,42 +218,45 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             as_sheet = query.get('sheet', ['0'])[0] in ('1', 'true')
             as_gif = query.get('gif', ['0'])[0] in ('1', 'true')
 
-            if entry.ext == '.CPS':
-                png_bytes = render_cps_to_png(entry, app_state.pal_manager)
-                self.send_bytes_response(png_bytes, 'image/png')
-
-            elif entry.ext == '.SHP':
-                raw = entry.read()
-                model = decode_shp(raw, app_state.pal_manager, entry.pak_name, entry.name)
-                if as_sheet:
-                    png_bytes = model.render_spritesheet_png()
-                else:
-                    png_bytes = model.render_frame_png(frame_idx)
-                self.send_bytes_response(png_bytes, 'image/png')
-
-            elif entry.ext == '.WSA':
-                raw = entry.read()
-                anim = decode_wsa(raw, app_state.pal_manager, entry.pak_name, entry.name)
-                if as_gif:
-                    gif_bytes = anim.render_gif()
-                    self.send_bytes_response(gif_bytes, 'image/gif')
-                else:
-                    png_bytes = anim.render_frame_png(frame_idx)
+            try:
+                if entry.ext == '.CPS':
+                    png_bytes = render_cps_to_png(entry, app_state.pal_manager)
                     self.send_bytes_response(png_bytes, 'image/png')
 
-            elif entry.ext == '.XMI':
-                raw = entry.read()
-                mid = xmi_to_midi(raw)
-                self.send_bytes_response(mid, 'audio/midi', filename=f"{os.path.splitext(entry.name)[0]}.mid")
+                elif entry.ext == '.SHP':
+                    raw = entry.read()
+                    model = decode_shp(raw, app_state.pal_manager, entry.pak_name, entry.name)
+                    if as_sheet:
+                        png_bytes = model.render_spritesheet_png()
+                    else:
+                        png_bytes = model.render_frame_png(frame_idx)
+                    self.send_bytes_response(png_bytes, 'image/png')
 
-            elif entry.ext == '.VOC':
-                raw = entry.read()
-                wav = voc_to_wav(raw)
-                self.send_bytes_response(wav, 'audio/wav', filename=f"{os.path.splitext(entry.name)[0]}.wav")
+                elif entry.ext == '.WSA':
+                    raw = entry.read()
+                    anim = decode_wsa(raw, app_state.pal_manager, entry.pak_name, entry.name)
+                    if as_gif:
+                        gif_bytes = anim.render_gif()
+                        self.send_bytes_response(gif_bytes, 'image/gif')
+                    else:
+                        png_bytes = anim.render_frame_png(frame_idx)
+                        self.send_bytes_response(png_bytes, 'image/png')
 
-            else:
-                raw = entry.read()
-                self.send_bytes_response(raw, 'application/octet-stream')
+                elif entry.ext == '.XMI':
+                    raw = entry.read()
+                    mid = xmi_to_midi(raw)
+                    self.send_bytes_response(mid, 'audio/midi', filename=f"{os.path.splitext(entry.name)[0]}.mid")
+
+                elif entry.ext == '.VOC':
+                    raw = entry.read()
+                    wav = voc_to_wav(raw)
+                    self.send_bytes_response(wav, 'audio/wav', filename=f"{os.path.splitext(entry.name)[0]}.wav")
+
+                else:
+                    raw = entry.read()
+                    self.send_bytes_response(raw, 'application/octet-stream')
+            except Exception as ex:
+                self.send_json_response({'error': f'Failed to generate preview: {str(ex)}'}, status=500)
 
         elif path == "/api/asset/export":
             # Direct download endpoint
@@ -269,43 +272,46 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             frame_idx = int(query.get('frame', ['0'])[0])
             base_name = os.path.splitext(entry.name)[0]
 
-            if entry.ext == '.CPS':
-                png_bytes = render_cps_to_png(entry, app_state.pal_manager)
-                self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}.png", download=True)
+            try:
+                if entry.ext == '.CPS':
+                    png_bytes = render_cps_to_png(entry, app_state.pal_manager)
+                    self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}.png", download=True)
 
-            elif entry.ext == '.SHP':
-                raw = entry.read()
-                model = decode_shp(raw, app_state.pal_manager, entry.pak_name, entry.name)
-                if as_sheet:
-                    png_bytes = model.render_spritesheet_png()
-                    self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_spritesheet.png", download=True)
+                elif entry.ext == '.SHP':
+                    raw = entry.read()
+                    model = decode_shp(raw, app_state.pal_manager, entry.pak_name, entry.name)
+                    if as_sheet:
+                        png_bytes = model.render_spritesheet_png()
+                        self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_spritesheet.png", download=True)
+                    else:
+                        png_bytes = model.render_frame_png(frame_idx)
+                        self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_frame{frame_idx}.png", download=True)
+
+                elif entry.ext == '.WSA':
+                    raw = entry.read()
+                    anim = decode_wsa(raw, app_state.pal_manager, entry.pak_name, entry.name)
+                    if as_gif:
+                        gif_bytes = anim.render_gif()
+                        self.send_bytes_response(gif_bytes, 'image/gif', filename=f"{base_name}.gif", download=True)
+                    else:
+                        png_bytes = anim.render_frame_png(frame_idx)
+                        self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_frame{frame_idx}.png", download=True)
+
+                elif entry.ext == '.XMI':
+                    raw = entry.read()
+                    mid = xmi_to_midi(raw)
+                    self.send_bytes_response(mid, 'audio/midi', filename=f"{base_name}.mid", download=True)
+
+                elif entry.ext == '.VOC':
+                    raw = entry.read()
+                    wav = voc_to_wav(raw)
+                    self.send_bytes_response(wav, 'audio/wav', filename=f"{base_name}.wav", download=True)
+
                 else:
-                    png_bytes = model.render_frame_png(frame_idx)
-                    self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_frame{frame_idx}.png", download=True)
-
-            elif entry.ext == '.WSA':
-                raw = entry.read()
-                anim = decode_wsa(raw, app_state.pal_manager, entry.pak_name, entry.name)
-                if as_gif:
-                    gif_bytes = anim.render_gif()
-                    self.send_bytes_response(gif_bytes, 'image/gif', filename=f"{base_name}.gif", download=True)
-                else:
-                    png_bytes = anim.render_frame_png(frame_idx)
-                    self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_frame{frame_idx}.png", download=True)
-
-            elif entry.ext == '.XMI':
-                raw = entry.read()
-                mid = xmi_to_midi(raw)
-                self.send_bytes_response(mid, 'audio/midi', filename=f"{base_name}.mid", download=True)
-
-            elif entry.ext == '.VOC':
-                raw = entry.read()
-                wav = voc_to_wav(raw)
-                self.send_bytes_response(wav, 'audio/wav', filename=f"{base_name}.wav", download=True)
-
-            else:
-                raw = entry.read()
-                self.send_bytes_response(raw, 'application/octet-stream', filename=entry.name, download=True)
+                    raw = entry.read()
+                    self.send_bytes_response(raw, 'application/octet-stream', filename=entry.name, download=True)
+            except Exception as ex:
+                self.send_json_response({'error': f'Failed to export asset: {str(ex)}'}, status=500)
 
         elif path == "/api/batch_status":
             job = app_state.extractor.current_job
@@ -318,24 +324,30 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             self.send_json_response({'error': 'Endpoint not found'}, status=404)
 
     def send_json_response(self, data: Any, status: int = 200):
-        body = json.dumps(data).encode('utf-8')
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Content-Length', str(len(body)))
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            body = json.dumps(data).encode('utf-8')
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def send_bytes_response(self, data: bytes, content_type: str, filename: str = "", download: bool = False):
-        self.send_response(200)
-        self.send_header('Content-Type', content_type)
-        self.send_header('Content-Length', str(len(data)))
-        self.send_header('Access-Control-Allow-Origin', '*')
-        if filename:
-            disposition = 'attachment' if download else 'inline'
-            self.send_header('Content-Disposition', f'{disposition}; filename="{filename}"')
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            if filename:
+                disposition = 'attachment' if download else 'inline'
+                self.send_header('Content-Disposition', f'{disposition}; filename="{filename}"')
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def log_message(self, format, *args):
         # Quiet logging for smooth performance

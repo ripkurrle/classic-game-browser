@@ -25,10 +25,13 @@ def format80_decode(source: bytes, dest_length: int) -> bytes:
             size = (cmd >> 4) + 3
             if size > dest_length - dp:
                 size = dest_length - dp
+            if sp >= src_len:
+                break
             offset = ((cmd & 0x0F) << 8) | source[sp]
             sp += 1
             for _ in range(size):
-                dest[dp] = dest[dp - offset]
+                if dp >= offset:
+                    dest[dp] = dest[dp - offset]
                 dp += 1
         elif cmd == 0xFE:
             # Long set (fill)
@@ -55,7 +58,8 @@ def format80_decode(source: bytes, dest_length: int) -> bytes:
             offset = source[sp] | (source[sp + 1] << 8)
             sp += 2
             for _ in range(size):
-                dest[dp] = dest[offset]
+                if offset < dest_length:
+                    dest[dp] = dest[offset]
                 dp += 1
                 offset += 1
         elif (cmd & 0x40) != 0:
@@ -68,7 +72,8 @@ def format80_decode(source: bytes, dest_length: int) -> bytes:
             offset = source[sp] | (source[sp + 1] << 8)
             sp += 2
             for _ in range(size):
-                dest[dp] = dest[offset]
+                if offset < dest_length:
+                    dest[dp] = dest[offset]
                 dp += 1
                 offset += 1
         else:
