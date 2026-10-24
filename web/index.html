@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kyrandia 2: Hand of Fate - Asset Studio & Extractor</title>
+  <meta name="description" content="Extract rendered pictures of models and backgrounds as well as MIDI files from Westwood Studios' The Legend of Kyrandia 2: Hand of Fate.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="dark-theme">
+  <!-- App Container -->
+  <div id="app" class="app-layout">
+    
+    <!-- Top Header Bar -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        </div>
+        <div class="brand-info">
+          <div class="brand-title-wrap">
+            <h1 class="brand-title">Kyrandia 2: Hand of Fate</h1>
+            <span class="brand-badge">Asset Studio</span>
+          </div>
+          <p class="brand-subtitle">Westwood Studios 1993 • High-Fidelity Asset Extractor & Explorer</p>
+        </div>
+      </div>
+
+      <div class="header-game-dir">
+        <div class="dir-pill" id="dirSelectorBtn" title="Click to view or change game directory">
+          <span class="dir-dot"></span>
+          <span class="dir-label">Game Dir:</span>
+          <span class="dir-path" id="headerGameDir">Detecting...</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+          </svg>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button id="batchExportBtn" class="btn btn-primary glow-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span>Batch Export Center</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Category Stats & Filter Bar -->
+    <nav class="sub-header">
+      <div class="category-tabs" id="categoryTabs">
+        <button class="cat-tab active" data-category="all">
+          <span class="tab-icon">✨</span>
+          <span class="tab-text">All Assets</span>
+          <span class="tab-count" id="countAll">0</span>
+        </button>
+        <button class="cat-tab" data-category="backgrounds">
+          <span class="tab-icon">🖼️</span>
+          <span class="tab-text">Backgrounds</span>
+          <span class="tab-count" id="countBg">0</span>
+        </button>
+        <button class="cat-tab" data-category="models">
+          <span class="tab-icon">🧙</span>
+          <span class="tab-text">Models & Sprites</span>
+          <span class="tab-count" id="countModels">0</span>
+        </button>
+        <button class="cat-tab" data-category="soundtracks">
+          <span class="tab-icon">🎵</span>
+          <span class="tab-text">MIDI Soundtracks</span>
+          <span class="tab-count" id="countMidi">0</span>
+        </button>
+        <button class="cat-tab" data-category="animations">
+          <span class="tab-icon">🎬</span>
+          <span class="tab-text">Animations</span>
+          <span class="tab-count" id="countAnim">0</span>
+        </button>
+        <button class="cat-tab" data-category="sfx">
+          <span class="tab-icon">🔊</span>
+          <span class="tab-text">Voices & SFX</span>
+          <span class="tab-count" id="countSfx">0</span>
+        </button>
+      </div>
+
+      <div class="search-filter-controls">
+        <div class="search-box">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="searchInput" placeholder="Search 1,900+ assets (e.g. Z1, ALLEY, K2TEST)..." autocomplete="off">
+          <button id="clearSearchBtn" class="clear-btn" style="display: none;">&times;</button>
+        </div>
+
+        <div class="select-wrapper">
+          <select id="pakSelect">
+            <option value="">All Archives (.PAK)</option>
+          </select>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Workspace -->
+    <main class="main-workspace">
+      
+      <!-- Left Sidebar: Asset Grid / List -->
+      <aside class="asset-sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title" id="assetListHeading">Assets</span>
+          <div class="view-toggles">
+            <button id="viewGridBtn" class="icon-toggle active" title="Grid View">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            </button>
+            <button id="viewListBtn" class="icon-toggle" title="List View">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="4" width="18" height="3"></rect><rect x="3" y="10.5" width="18" height="3"></rect><rect x="3" y="17" width="18" height="3"></rect></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="asset-list-container" id="assetList">
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <span>Loading assets...</span>
+          </div>
+        </div>
+        
+        <div class="sidebar-footer">
+          <span id="filteredCountLabel">Showing 0 assets</span>
+        </div>
+      </aside>
+
+      <!-- Right Main: Interactive Studio Inspector -->
+      <section class="viewer-section" id="viewerSection">
+        
+        <!-- Viewer Header -->
+        <div class="viewer-header">
+          <div class="active-asset-info">
+            <div class="type-pill" id="selectedAssetType">CPS</div>
+            <div class="asset-names">
+              <h2 class="active-asset-title" id="selectedAssetName">Select an asset to view</h2>
+              <span class="active-asset-pak" id="selectedAssetPak">Archive: None</span>
+            </div>
+          </div>
+
+          <div class="viewer-actions" id="viewerActions">
+            <!-- Dynamic export buttons injected here -->
+          </div>
+        </div>
+
+        <!-- Viewer Content Stage -->
+        <div class="viewer-stage" id="viewerStage">
+          <div class="empty-state">
+            <div class="empty-icon">🎮</div>
+            <h3>Explore Kyrandia 2 Assets</h3>
+            <p>Select any background, character model, soundtrack, or animation on the left to inspect and export.</p>
+          </div>
+        </div>
+
+        <!-- Viewer Meta & Controls Drawer -->
+        <div class="viewer-meta-drawer" id="viewerMetaDrawer">
+          <div class="meta-chips" id="metaChips"></div>
+          <div class="interactive-controls" id="interactiveControls"></div>
+        </div>
+
+      </section>
+    </main>
+
+  </div>
+
+  <!-- Batch Export Modal -->
+  <div class="modal-overlay" id="exportModal" style="display: none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <div class="modal-icon">📦</div>
+          <div>
+            <h3>Batch Asset Export Center</h3>
+            <p>Export game assets in standard modern formats</p>
+          </div>
+        </div>
+        <button class="modal-close" id="closeExportModalBtn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="export-options-grid">
+          <label class="export-option-card">
+            <input type="radio" name="batchType" value="backgrounds" checked>
+            <div class="option-content">
+              <span class="opt-icon">🖼️</span>
+              <div class="opt-text">
+                <strong>Export All Backgrounds</strong>
+                <span>Renders all 112 .CPS scene backgrounds to PNG (320x200 24-bit RGB)</span>
+              </div>
+            </div>
+          </label>
+
+          <label class="export-option-card">
+            <input type="radio" name="batchType" value="models">
+            <div class="option-content">
+              <span class="opt-icon">🧙</span>
+              <div class="opt-text">
+                <strong>Export All Models & Sprites</strong>
+                <span>Renders all 126 .SHP character models to PNG sprite sheets and frame sequences</span>
+              </div>
+            </div>
+          </label>
+
+          <label class="export-option-card">
+            <input type="radio" name="batchType" value="midi">
+            <div class="option-content">
+              <span class="opt-icon">🎵</span>
+              <div class="opt-text">
+                <strong>Export All Soundtracks as MIDI</strong>
+                <span>Converts all Miles XMIDI tracks into Standard MIDI (.mid) files</span>
+              </div>
+            </div>
+          </label>
+
+          <label class="export-option-card">
+            <input type="radio" name="batchType" value="all">
+            <div class="option-content">
+              <span class="opt-icon">🌟</span>
+              <div class="opt-text">
+                <strong>Complete Asset Dump (All)</strong>
+                <span>Exports all backgrounds, models, MIDI soundtracks, and audio clips into organized folders</span>
+              </div>
+            </div>
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label for="exportFolderInput">Output Folder Path:</label>
+          <input type="text" id="exportFolderInput" class="form-input" value="exported_assets">
+          <small class="form-hint">Files will be saved in this folder on your computer.</small>
+        </div>
+
+        <!-- Progress Container -->
+        <div class="export-progress-wrap" id="exportProgressWrap" style="display: none;">
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill" id="exportProgressBar" style="width: 0%;"></div>
+          </div>
+          <div class="progress-stats">
+            <span id="exportProgressText">Processing: 0%</span>
+            <span id="exportCurrentItem">Preparing...</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelExportModalBtn">Close</button>
+        <button class="btn btn-primary glow-btn" id="startBatchExportBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          <span>Start Batch Export</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Change Directory Modal -->
+  <div class="modal-overlay" id="dirModal" style="display: none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <div class="modal-icon">📁</div>
+          <div>
+            <h3>Game Directory Settings</h3>
+            <p>Point the extractor to your Kyrandia 2 installation</p>
+          </div>
+        </div>
+        <button class="modal-close" id="closeDirModalBtn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="dirInput">Kyrandia 2 Directory:</label>
+          <input type="text" id="dirInput" class="form-input" value="">
+          <small class="form-hint">Enter the path to the folder containing .PAK files (e.g. ALLEY.PAK, AUDIO.PAK).</small>
+        </div>
+        <div id="dirStatusMsg" class="status-box" style="display: none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelDirModalBtn">Cancel</button>
+        <button class="btn btn-primary" id="saveDirBtn">Scan & Load Directory</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Audio element for WAV playback -->
+  <audio id="audioPlayer" style="display: none;"></audio>
+
+  <!-- Scripts -->
+  <script src="midi_synth.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

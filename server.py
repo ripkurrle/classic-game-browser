@@ -1,0 +1,358 @@
+"""
+Desktop Backend HTTP Server and REST API for Kyrandia 2 Classic Game Browser.
+"""
+
+import os
+import json
+import urllib.parse
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from typing import Optional, Any
+
+from core.pak import GameRepository
+from core.palette import PaletteManager
+from core.cps import decode_cps_data, render_cps_to_png
+from core.shp import decode_shp
+from core.wsa import decode_wsa
+from core.xmi2mid import xmi_to_midi, get_midi_metadata
+from core.voc2wav import voc_to_wav
+from core.extractor import BatchExtractor
+
+DEFAULT_GAME_DIR = os.path.abspath(os.path.join(
+    os.path.dirname(__file__),
+    "The Legend of Kyrandia 2 The Hand of Fate (CD DOS).svm"
+))
+WEB_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "web"))
+
+class KyrandiaState:
+    def __init__(self, game_dir: str):
+        self.game_dir = game_dir
+        self.repo = GameRepository(game_dir)
+        self.pal_manager = PaletteManager(self.repo)
+        self.extractor = BatchExtractor(self.repo, self.pal_manager)
+
+    def set_directory(self, new_dir: str):
+        self.game_dir = os.path.abspath(new_dir)
+        self.repo = GameRepository(self.game_dir)
+        self.pal_manager = PaletteManager(self.repo)
+        self.extractor = BatchExtractor(self.repo, self.pal_manager)
+
+app_state = KyrandiaState(DEFAULT_GAME_DIR)
+
+
+class AppRequestHandler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=WEB_DIR, **kwargs)
+
+    def do_GET(self):
+        url_parts = urllib.parse.urlparse(self.path)
+        path = url_parts.path
+        query = urllib.parse.parse_qs(url_parts.query)
+
+        if path.startswith("/api/"):
+            self.handle_api_get(path, query)
+        else:
+            # Fallback to index.html for single-page app routing if file doesn't exist
+            file_path = os.path.join(WEB_DIR, path.lstrip('/'))
+            if not os.path.isfile(file_path):
+                self.path = "/index.html"
+            super().do_GET()
+
+    def do_POST(self):
+        url_parts = urllib.parse.urlparse(self.path)
+        path = url_parts.path
+
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length) if content_length > 0 else b"{}"
+
+        try:
+            body = json.loads(post_data.decode('utf-8'))
+        except Exception:
+            body = {}
+
+        if path == "/api/set_dir":
+            new_dir = body.get('directory', '').strip()
+            if not new_dir or not os.path.isdir(new_dir):
+                self.send_json_response({'error': 'Invalid directory path'}, status=400)
+                return
+            app_state.set_directory(new_dir)
+            self.send_json_response({
+                'success': True,
+                'directory': app_state.game_dir,
+                'total_paks': len(app_state.repo.paks),
+                'total_assets': len(app_state.repo.all_entries),
+            })
+
+        elif path == "/api/batch_export":
+            export_type = body.get('type', 'all')
+            dest_dir = body.get('dest_dir', 'exported_assets')
+            job = app_state.extractor.start_batch_export(export_type, dest_dir)
+            self.send_json_response(job.to_dict())
+
+        else:
+            self.send_json_response({'error': 'Endpoint not found'}, status=404)
+
+    def handle_api_get(self, path: str, query: dict):
+        if path == "/api/status":
+            counts = {
+                'backgrounds': len(app_state.repo.get_entries_by_ext('.CPS')),
+                'models': len(app_state.repo.get_entries_by_ext('.SHP')),
+                'animations': len(app_state.repo.get_entries_by_ext('.WSA')),
+                'soundtracks': len(app_state.repo.get_entries_by_ext('.XMI')),
+                'sfx': len(app_state.repo.get_entries_by_ext('.VOC')),
+                'palettes': len(app_state.repo.get_entries_by_ext('.COL')) + len(app_state.repo.get_entries_by_ext('.PAL')),
+                'total_assets': len(app_state.repo.all_entries),
+                'total_paks': len(app_state.repo.paks),
+            }
+            self.send_json_response({
+                'game_dir': app_state.game_dir,
+                'game_title': 'The Legend of Kyrandia 2: Hand of Fate',
+                'counts': counts,
+                'paks': sorted(list(app_state.repo.paks.keys())),
+            })
+
+        elif path == "/api/assets":
+            category = query.get('category', ['all'])[0].lower()
+            pak_filter = query.get('pak', [''])[0].upper()
+            search = query.get('q', [''])[0].lower()
+
+            entries = app_state.repo.all_entries
+
+            if category == 'backgrounds':
+                entries = [e for e in entries if e.ext == '.CPS']
+            elif category == 'models':
+                entries = [e for e in entries if e.ext == '.SHP']
+            elif category == 'animations':
+                entries = [e for e in entries if e.ext == '.WSA']
+            elif category == 'soundtracks':
+                entries = [e for e in entries if e.ext == '.XMI']
+            elif category == 'sfx':
+                entries = [e for e in entries if e.ext == '.VOC']
+            elif category == 'palettes':
+                entries = [e for e in entries if e.ext in ('.COL', '.PAL')]
+
+            if pak_filter:
+                entries = [e for e in entries if e.pak_name.upper() == pak_filter]
+
+            if search:
+                entries = [e for e in entries if search in e.name.lower() or search in e.pak_name.lower()]
+
+            results = [e.to_dict() for e in entries]
+            self.send_json_response({'count': len(results), 'assets': results})
+
+        elif path == "/api/asset/details":
+            pak_name = query.get('pak', [''])[0]
+            name = query.get('name', [''])[0]
+            entry = app_state.repo.get_entry(pak_name, name)
+            if not entry:
+                self.send_json_response({'error': 'Asset not found'}, status=404)
+                return
+
+            details = entry.to_dict()
+
+            if entry.ext == '.CPS':
+                try:
+                    raw = entry.read()
+                    img = decode_cps_data(raw, app_state.pal_manager, entry.pak_name, entry.name)
+                    details['dimensions'] = f"{img.width}x{img.height}"
+                    details['width'] = img.width
+                    details['height'] = img.height
+                    # Get palette colors
+                    pal = app_state.pal_manager.get_palette_for_asset(entry.pak_name, entry.name)
+                    details['palette_sample'] = [
+                        [pal[i*3], pal[i*3+1], pal[i*3+2]] for i in range(min(32, len(pal)//3))
+                    ]
+                except Exception as ex:
+                    details['error'] = str(ex)
+
+            elif entry.ext == '.SHP':
+                try:
+                    raw = entry.read()
+                    model = decode_shp(raw, app_state.pal_manager, entry.pak_name, entry.name)
+                    details['num_frames'] = model.num_frames
+                    details['max_width'] = model.max_width
+                    details['max_height'] = model.max_height
+                    details['frame_sizes'] = [[f.width, f.height] for f in model.frames]
+                except Exception as ex:
+                    details['error'] = str(ex)
+
+            elif entry.ext == '.WSA':
+                try:
+                    raw = entry.read()
+                    anim = decode_wsa(raw, app_state.pal_manager, entry.pak_name, entry.name)
+                    details['num_frames'] = anim.num_frames
+                    details['width'] = anim.width
+                    details['height'] = anim.height
+                    details['pos_x'] = anim.x_add
+                    details['pos_y'] = anim.y_add
+                except Exception as ex:
+                    details['error'] = str(ex)
+
+            elif entry.ext == '.XMI':
+                try:
+                    raw = entry.read()
+                    mid = xmi_to_midi(raw)
+                    meta = get_midi_metadata(mid)
+                    details['midi_meta'] = meta
+                except Exception as ex:
+                    details['error'] = str(ex)
+
+            elif entry.ext == '.VOC':
+                try:
+                    raw = entry.read()
+                    wav = voc_to_wav(raw)
+                    details['wav_size'] = len(wav)
+                except Exception as ex:
+                    details['error'] = str(ex)
+
+            self.send_json_response(details)
+
+        elif path == "/api/asset/preview":
+            pak_name = query.get('pak', [''])[0]
+            name = query.get('name', [''])[0]
+            entry = app_state.repo.get_entry(pak_name, name)
+            if not entry:
+                self.send_error(404, "Asset not found")
+                return
+
+            frame_idx = int(query.get('frame', ['0'])[0])
+            as_sheet = query.get('sheet', ['0'])[0] in ('1', 'true')
+            as_gif = query.get('gif', ['0'])[0] in ('1', 'true')
+
+            if entry.ext == '.CPS':
+                png_bytes = render_cps_to_png(entry, app_state.pal_manager)
+                self.send_bytes_response(png_bytes, 'image/png')
+
+            elif entry.ext == '.SHP':
+                raw = entry.read()
+                model = decode_shp(raw, app_state.pal_manager, entry.pak_name, entry.name)
+                if as_sheet:
+                    png_bytes = model.render_spritesheet_png()
+                else:
+                    png_bytes = model.render_frame_png(frame_idx)
+                self.send_bytes_response(png_bytes, 'image/png')
+
+            elif entry.ext == '.WSA':
+                raw = entry.read()
+                anim = decode_wsa(raw, app_state.pal_manager, entry.pak_name, entry.name)
+                if as_gif:
+                    gif_bytes = anim.render_gif()
+                    self.send_bytes_response(gif_bytes, 'image/gif')
+                else:
+                    png_bytes = anim.render_frame_png(frame_idx)
+                    self.send_bytes_response(png_bytes, 'image/png')
+
+            elif entry.ext == '.XMI':
+                raw = entry.read()
+                mid = xmi_to_midi(raw)
+                self.send_bytes_response(mid, 'audio/midi', filename=f"{os.path.splitext(entry.name)[0]}.mid")
+
+            elif entry.ext == '.VOC':
+                raw = entry.read()
+                wav = voc_to_wav(raw)
+                self.send_bytes_response(wav, 'audio/wav', filename=f"{os.path.splitext(entry.name)[0]}.wav")
+
+            else:
+                raw = entry.read()
+                self.send_bytes_response(raw, 'application/octet-stream')
+
+        elif path == "/api/asset/export":
+            # Direct download endpoint
+            pak_name = query.get('pak', [''])[0]
+            name = query.get('name', [''])[0]
+            entry = app_state.repo.get_entry(pak_name, name)
+            if not entry:
+                self.send_error(404, "Asset not found")
+                return
+
+            as_sheet = query.get('sheet', ['0'])[0] in ('1', 'true')
+            as_gif = query.get('gif', ['0'])[0] in ('1', 'true')
+            frame_idx = int(query.get('frame', ['0'])[0])
+            base_name = os.path.splitext(entry.name)[0]
+
+            if entry.ext == '.CPS':
+                png_bytes = render_cps_to_png(entry, app_state.pal_manager)
+                self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}.png", download=True)
+
+            elif entry.ext == '.SHP':
+                raw = entry.read()
+                model = decode_shp(raw, app_state.pal_manager, entry.pak_name, entry.name)
+                if as_sheet:
+                    png_bytes = model.render_spritesheet_png()
+                    self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_spritesheet.png", download=True)
+                else:
+                    png_bytes = model.render_frame_png(frame_idx)
+                    self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_frame{frame_idx}.png", download=True)
+
+            elif entry.ext == '.WSA':
+                raw = entry.read()
+                anim = decode_wsa(raw, app_state.pal_manager, entry.pak_name, entry.name)
+                if as_gif:
+                    gif_bytes = anim.render_gif()
+                    self.send_bytes_response(gif_bytes, 'image/gif', filename=f"{base_name}.gif", download=True)
+                else:
+                    png_bytes = anim.render_frame_png(frame_idx)
+                    self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_frame{frame_idx}.png", download=True)
+
+            elif entry.ext == '.XMI':
+                raw = entry.read()
+                mid = xmi_to_midi(raw)
+                self.send_bytes_response(mid, 'audio/midi', filename=f"{base_name}.mid", download=True)
+
+            elif entry.ext == '.VOC':
+                raw = entry.read()
+                wav = voc_to_wav(raw)
+                self.send_bytes_response(wav, 'audio/wav', filename=f"{base_name}.wav", download=True)
+
+            else:
+                raw = entry.read()
+                self.send_bytes_response(raw, 'application/octet-stream', filename=entry.name, download=True)
+
+        elif path == "/api/batch_status":
+            job = app_state.extractor.current_job
+            if job:
+                self.send_json_response(job.to_dict())
+            else:
+                self.send_json_response({'status': 'idle'})
+
+        else:
+            self.send_json_response({'error': 'Endpoint not found'}, status=404)
+
+    def send_json_response(self, data: Any, status: int = 200):
+        body = json.dumps(data).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_bytes_response(self, data: bytes, content_type: str, filename: str = "", download: bool = False):
+        self.send_response(200)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Access-Control-Allow-Origin', '*')
+        if filename:
+            disposition = 'attachment' if download else 'inline'
+            self.send_header('Content-Disposition', f'{disposition}; filename="{filename}"')
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, format, *args):
+        # Quiet logging for smooth performance
+        pass
+
+
+def run_server(host: str = "127.0.0.1", port: int = 8080):
+    server = ThreadingHTTPServer((host, port), AppRequestHandler)
+    print(f"Kyrandia 2 Asset Explorer running at http://{host}:{port}/")
+    return server
+
+if __name__ == "__main__":
+    import sys
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
+    server = run_server("127.0.0.1", port)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down server...")
+        server.server_close()
