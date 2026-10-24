@@ -102,6 +102,9 @@
     countAnim: document.getElementById('countAnim'),
     countSfx: document.getElementById('countSfx'),
     countPalettes: document.getElementById('countPalettes'),
+    countScripts: document.getElementById('countScripts'),
+    langFilterWrapper: document.getElementById('langFilterWrapper'),
+    langSelect: document.getElementById('langSelect'),
 
     // Batch Export Modal
     batchExportBtn: document.getElementById('batchExportBtn'),
@@ -140,9 +143,25 @@
       document.querySelectorAll('.cat-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
       state.currentCategory = tab.dataset.category;
+
+      if (state.currentCategory === 'scripts' || state.currentCategory.startsWith('scripts')) {
+        if (el.langFilterWrapper) el.langFilterWrapper.style.display = 'block';
+        if (el.langSelect) el.langSelect.value = state.currentCategory;
+      } else {
+        if (el.langFilterWrapper) el.langFilterWrapper.style.display = 'none';
+      }
+
       updateSortControlsUI();
       loadAssets();
     });
+
+    if (el.langSelect) {
+      el.langSelect.addEventListener('change', (e) => {
+        state.currentCategory = e.target.value || 'scripts';
+        updateSortControlsUI();
+        loadAssets();
+      });
+    }
 
     // Sorting Controls
     el.sortByNameBtn.addEventListener('click', () => {
@@ -253,6 +272,9 @@
         if (el.countPalettes && data.counts.palettes !== undefined) {
           el.countPalettes.textContent = data.counts.palettes.toLocaleString();
         }
+        if (el.countScripts && data.counts.scripts !== undefined) {
+          el.countScripts.textContent = data.counts.scripts.toLocaleString();
+        }
       }
 
       // Populate PAK dropdown
@@ -325,6 +347,10 @@
         animations: 'Animations',
         sfx: 'Voices & SFX',
         palettes: 'Color Palettes (.COL)',
+        scripts: 'Scripts & Dialogue (All Languages)',
+        scripts_en: 'English Scripts & Dialogue (🇬🇧)',
+        scripts_fr: 'French Scripts & Dialogue (🇫🇷)',
+        scripts_de: 'German Scripts & Dialogue (🇩🇪)',
       };
       el.assetListHeading.textContent = titles[state.currentCategory] || 'Assets';
     }
@@ -410,9 +436,9 @@
       const extClass = `ext-${asset.ext.replace('.', '').toLowerCase()}`;
       let thumbHtml = '';
 
-      if (asset.ext === '.CPS') {
+      if (asset.ext === '.CPS' || asset.ext === '.CMP') {
         thumbHtml = `<img src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}" class="asset-thumbnail" loading="lazy" alt="${asset.name}">`;
-      } else if (asset.ext === '.SHP') {
+      } else if (asset.ext === '.SHP' || asset.ext === '.CSH') {
         thumbHtml = `<img src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=0" class="asset-thumbnail" loading="lazy" alt="${asset.name}">`;
       } else if (asset.ext === '.WSA') {
         thumbHtml = `<img src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=0" class="asset-thumbnail" loading="lazy" alt="${asset.name}">`;
@@ -420,10 +446,31 @@
         thumbHtml = `<img src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&cell=2" class="asset-thumbnail" loading="lazy" alt="${asset.name}">`;
       } else if (asset.ext === '.XMI') {
         thumbHtml = `<span class="asset-placeholder-icon">🎵</span>`;
+      } else if (asset.ext === '.ADL') {
+        thumbHtml = `<span class="asset-placeholder-icon">📻</span>`;
+      } else if (asset.ext === '.C55') {
+        thumbHtml = `<span class="asset-placeholder-icon">🎹</span>`;
       } else if (asset.ext === '.VOC') {
         thumbHtml = `<span class="asset-placeholder-icon">🔊</span>`;
+      } else if (asset.ext === '.PCS') {
+        thumbHtml = `<span class="asset-placeholder-icon">📢</span>`;
+      } else if (asset.ext === '.TIM') {
+        thumbHtml = `<span class="asset-placeholder-icon">⏱️</span>`;
+      } else if (asset.ext === '.MSC') {
+        thumbHtml = `<span class="asset-placeholder-icon">🎯</span>`;
+      } else if (asset.ext === '.ADV') {
+        thumbHtml = `<span class="asset-placeholder-icon">⚙️</span>`;
+      } else if (asset.ext === '.DRV') {
+        thumbHtml = `<span class="asset-placeholder-icon">🔌</span>`;
+      } else if (asset.ext === '.FNT') {
+        thumbHtml = `<span class="asset-placeholder-icon">🔤</span>`;
+      } else if (asset.ext === '.DAT') {
+        thumbHtml = `<span class="asset-placeholder-icon">📊</span>`;
+      } else if (['.EMC', '.FMC', '.GMC', '.DLE', '.DLF', '.DLG', '.ENG', '.FRE', '.GER'].includes(asset.ext)) {
+        const flag = asset.flag || (['.EMC', '.DLE', '.ENG'].includes(asset.ext) ? '🇬🇧' : (['.FMC', '.DLF', '.FRE'].includes(asset.ext) ? '🇫🇷' : '🇩🇪'));
+        thumbHtml = `<span class="asset-placeholder-icon">📜</span><span class="asset-badge-lang">${flag}</span>`;
       } else {
-        thumbHtml = `<span class="asset-placeholder-icon">📄</span>`;
+        thumbHtml = `<span class="asset-placeholder-icon">${asset.type_icon || '📄'}</span>`;
       }
 
       card.innerHTML = `
@@ -470,9 +517,12 @@
     }
 
     // Render corresponding viewer
-    if (asset.ext === '.CPS') {
+    const SCRIPT_EXTS = ['.EMC', '.FMC', '.GMC', '.DLE', '.DLF', '.DLG', '.ENG', '.FRE', '.GER'];
+    if (SCRIPT_EXTS.includes(asset.ext)) {
+      renderScriptViewer(asset, state.selectedDetails);
+    } else if (['.CPS', '.CMP'].includes(asset.ext)) {
       renderBackgroundViewer(asset, state.selectedDetails);
-    } else if (asset.ext === '.SHP') {
+    } else if (['.SHP', '.CSH'].includes(asset.ext)) {
       renderModelViewer(asset, state.selectedDetails);
     } else if (asset.ext === '.WSA') {
       renderAnimationViewer(asset, state.selectedDetails);
@@ -1302,25 +1352,537 @@
     }
   }
 
-  // 7. Raw File Fallback
-  function renderRawViewer(asset, details) {
-    const exportUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}`;
+  // 6. Script & Dialogue Viewer (.EMC, .FMC, .GMC, .DLE, .DLF, .DLG, .ENG, .FRE, .GER)
+  function renderScriptViewer(asset, details) {
+    const script = details.script_data || {};
+    const lang = script.language_name || details.language_name || 'English';
+    const flag = script.flag || details.flag || '🇬🇧';
+    const category = script.category || 'dialogue'; // 'dialogue', 'subtitles', 'strings'
+    const format = script.format || 'SCRIPT'; // 'DLE', 'EMC', 'TABLE', 'DOCUMENT'
+    const lines = script.lines || [];
+    const scenes = script.scenes || [];
+    const transcript = script.transcript || '';
+    const baseName = asset.name.replace(/\.[^/.]+$/, "");
+    const exportTxtUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&format=txt`;
+    const exportRawUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&format=raw`;
+
+    // Actions Header
     el.viewerActions.innerHTML = `
-      <a href="${exportUrl}" download="${asset.name}" class="btn btn-primary">
-        <span>Download Raw File</span>
+      <button id="copyScriptTranscriptBtn" class="btn btn-secondary glow-btn" title="Copy entire plain text transcript to clipboard">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+        </svg>
+        <span>Copy Plain Text</span>
+      </button>
+      <a href="${exportTxtUrl}" download="${baseName}_${asset.ext.replace('.', '')}.txt" class="btn btn-primary glow-btn" title="Download formatted plain text transcript">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        <span>Export TXT</span>
+      </a>
+      <a href="${exportRawUrl}" download="${asset.name}" class="btn btn-secondary" title="Download original game binary">
+        <span>Download Original</span>
       </a>
     `;
+
+    // Setup Copy button listener
+    const copyBtn = document.getElementById('copyScriptTranscriptBtn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(transcript).then(() => {
+          const original = copyBtn.innerHTML;
+          copyBtn.innerHTML = `<span>✓ Copied ${lines.length} Lines!</span>`;
+          copyBtn.classList.add('btn-primary');
+          copyBtn.classList.remove('btn-secondary');
+          setTimeout(() => {
+            copyBtn.innerHTML = original;
+            copyBtn.classList.remove('btn-primary');
+            copyBtn.classList.add('btn-secondary');
+          }, 1800);
+        });
+      });
+    }
+
+    // Metadata Chips
+    const badgeClass = `badge-${script.language || 'en'}`;
+    el.metaChips.innerHTML = `
+      <div class="meta-chip">
+        <span class="lang-chip ${badgeClass}">${flag} ${lang}</span>
+      </div>
+      <div class="meta-chip">Type: <strong>${script.category_label || script.doc_type || format}</strong></div>
+      <div class="meta-chip">Total Lines: <strong>${(script.total_lines || lines.length).toLocaleString()}</strong></div>
+      ${scenes.length > 0 ? `<div class="meta-chip">Scenes: <strong>${scenes.length}</strong></div>` : ''}
+      <div class="meta-chip">Archive: <strong>${asset.pak_name}</strong></div>
+      <div class="meta-chip">File Size: <strong>${formatBytes(asset.size)}</strong></div>
+    `;
+
+    // Interactive Controls
+    el.interactiveControls.innerHTML = '';
+
+    // Stage Structure
     el.viewerStage.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-icon">📁</div>
-        <h3>${asset.name}</h3>
-        <p>Raw Westwood file stored in ${asset.pak_name}. Size: ${formatBytes(asset.size)}.</p>
+      <div class="script-viewer-stage">
+        <div class="script-toolbar">
+          <div class="script-toolbar-left">
+            <div class="script-search-wrap">
+              <svg class="script-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input type="text" id="scriptSearchFilter" class="script-search-input" placeholder="Search spoken lines, items, or actors..." autocomplete="off">
+            </div>
+            <span class="script-line-counter" id="scriptMatchCounter">Showing ${lines.length} lines</span>
+          </div>
+
+          <div class="script-toolbar-right" id="scriptScenePills"></div>
+        </div>
+
+        <div class="script-scroll-area" id="scriptContentArea">
+          <!-- Injected dynamic script content -->
+        </div>
       </div>
     `;
+
+    const searchInput = document.getElementById('scriptSearchFilter');
+    const matchCounter = document.getElementById('scriptMatchCounter');
+    const contentArea = document.getElementById('scriptContentArea');
+    const scenePills = document.getElementById('scriptScenePills');
+
+    let currentSceneFilter = 'all';
+
+    // Renders the body based on format and search query
+    function renderScriptContent(query = '') {
+      const q = query.trim().toLowerCase();
+
+      // 1. Dialogue Script (.DLE, .DLF, .DLG)
+      if (format === 'DLE' || category === 'dialogue') {
+        let matchedLineCount = 0;
+        let html = '';
+
+        scenes.forEach((sc, idx) => {
+          if (currentSceneFilter !== 'all' && currentSceneFilter !== String(sc.scene_index)) {
+            return;
+          }
+
+          const filteredLines = sc.lines.filter(l => {
+            if (!q) return true;
+            return l.text.toLowerCase().includes(q) || l.actor_name.toLowerCase().includes(q);
+          });
+
+          if (filteredLines.length === 0) return;
+          matchedLineCount += filteredLines.length;
+
+          html += `
+            <div class="dialogue-scene-card" id="sceneCard_${sc.scene_index}">
+              <div class="scene-header-strip">
+                <div class="scene-tag">
+                  <span>🎬 Scene ${sc.scene_index}</span>
+                </div>
+                <span class="scene-stats">${filteredLines.length} spoken dialogue lines</span>
+              </div>
+              <div class="dialogue-bubbles-list">
+          `;
+
+          filteredLines.forEach(line => {
+            let avatarClass = 'actor-avatar-default';
+            let avatarEmoji = '💬';
+            let bubbleCustom = '';
+
+            if (line.actor_id === 12) {
+              avatarClass = 'actor-avatar-zanthia';
+              avatarEmoji = '🧙‍♀️';
+              bubbleCustom = 'zanthia-bubble';
+            } else if (line.actor_id === 13) {
+              avatarClass = 'actor-avatar-faun';
+              avatarEmoji = '🐐';
+              bubbleCustom = 'faun-bubble';
+            } else if (line.actor_id === 10 || line.actor_id === 11) {
+              avatarClass = 'actor-avatar-marko';
+              avatarEmoji = '👦';
+              bubbleCustom = 'marko-bubble';
+            } else if (line.actor_id === 14) {
+              avatarEmoji = '⚓';
+            } else if (line.actor_id === 16) {
+              avatarEmoji = '🎣';
+            } else if (line.actor_id === 20) {
+              avatarEmoji = '🐀';
+            } else if (line.actor_id === 50) {
+              avatarEmoji = '✋';
+            }
+
+            // Highlight matches
+            let displayText = line.text;
+            if (q && displayText.toLowerCase().includes(q)) {
+              const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+              displayText = displayText.replace(regex, '<mark>$1</mark>');
+            }
+
+            html += `
+              <div class="dialogue-bubble-row">
+                <div class="actor-avatar-badge ${avatarClass}" title="${line.actor_name} (ID: ${line.actor_id})">
+                  ${avatarEmoji}
+                </div>
+                <div class="bubble-content-wrap ${bubbleCustom}">
+                  <div class="bubble-meta-header">
+                    <span class="bubble-speaker-name">${line.actor_name}</span>
+                    <span class="bubble-seq-id">#${line.seq_id}</span>
+                  </div>
+                  <div class="bubble-line-text">${displayText}</div>
+                </div>
+              </div>
+            `;
+          });
+
+          html += `
+              </div>
+            </div>
+          `;
+        });
+
+        if (matchedLineCount === 0) {
+          contentArea.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon">🔍</div>
+              <h3>No dialogue matches "${query}"</h3>
+              <p>Try searching for a different character name or spoken keyword.</p>
+            </div>
+          `;
+        } else {
+          contentArea.innerHTML = html;
+        }
+
+        if (matchCounter) {
+          matchCounter.textContent = q ? `Matched ${matchedLineCount} lines` : `Showing ${lines.length} lines across ${scenes.length} scenes`;
+        }
+      }
+
+      // 2. Subtitles (.EMC, .FMC, .GMC)
+      else if (format === 'EMC' || category === 'subtitles') {
+        const filtered = lines.filter(l => !q || l.text.toLowerCase().includes(q));
+        if (filtered.length === 0) {
+          contentArea.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon">🔍</div>
+              <h3>No subtitles match "${query}"</h3>
+            </div>
+          `;
+        } else {
+          let html = `<div class="subtitles-table">`;
+          filtered.forEach(l => {
+            let txt = l.text;
+            if (q && txt.toLowerCase().includes(q)) {
+              const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+              txt = txt.replace(regex, '<mark>$1</mark>');
+            }
+            html += `
+              <div class="subtitle-item-row">
+                <span class="subtitle-id-chip">[${String(l.index).padStart(3, '0')}]</span>
+                <span class="subtitle-text-content">${txt || '<em style="color:var(--text-muted);">(empty)</em>'}</span>
+              </div>
+            `;
+          });
+          html += `</div>`;
+          contentArea.innerHTML = html;
+        }
+
+        if (matchCounter) {
+          matchCounter.textContent = q ? `Matched ${filtered.length} subtitles` : `Showing ${lines.length} subtitles`;
+        }
+      }
+
+      // 3. Document (PAGE*, LETTER*)
+      else if (format === 'DOCUMENT') {
+        let docText = transcript;
+        if (q && docText.toLowerCase().includes(q)) {
+          const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+          docText = docText.replace(regex, '<mark>$1</mark>');
+        }
+        contentArea.innerHTML = `
+          <div class="parchment-container">
+            <div class="parchment-card">
+              <div class="parchment-doc-title">${script.doc_type || 'In-Game Document'} • ${asset.name}</div>
+              <div class="parchment-content-text">${docText}</div>
+            </div>
+          </div>
+        `;
+        if (matchCounter) {
+          matchCounter.textContent = `${lines.length} lines • ${lang}`;
+        }
+      }
+
+      // 4. String Tables (CH*, OPTIONS, C_CODE, LIB_MSG)
+      else {
+        const filtered = lines.filter(l => !q || l.text.toLowerCase().includes(q));
+        if (filtered.length === 0) {
+          contentArea.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon">🔍</div>
+              <h3>No items match "${query}"</h3>
+            </div>
+          `;
+        } else {
+          let html = `<div class="strings-grid">`;
+          filtered.forEach(l => {
+            let txt = l.text;
+            if (q && txt.toLowerCase().includes(q)) {
+              const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+              txt = txt.replace(regex, '<mark>$1</mark>');
+            }
+            html += `
+              <div class="string-card-item" title="Click to copy text" data-copy="${l.text}">
+                <span class="string-card-idx">[${String(l.index).padStart(3, '0')}]</span>
+                <span class="string-card-val">${txt || '<em style="color:var(--text-muted);">(empty)</em>'}</span>
+              </div>
+            `;
+          });
+          html += `</div>`;
+          contentArea.innerHTML = html;
+
+          // Add click-to-copy on string cards
+          contentArea.querySelectorAll('.string-card-item').forEach(card => {
+            card.addEventListener('click', () => {
+              const textToCopy = card.dataset.copy;
+              if (textToCopy) {
+                navigator.clipboard.writeText(textToCopy).then(() => {
+                  card.style.borderColor = 'var(--accent-emerald)';
+                  setTimeout(() => card.style.borderColor = '', 800);
+                });
+              }
+            });
+          });
+        }
+
+        if (matchCounter) {
+          matchCounter.textContent = q ? `Matched ${filtered.length} entries` : `Showing ${lines.length} entries (${script.doc_type || 'String Table'})`;
+        }
+      }
+    }
+
+    // Render Scene Pills if dialogue
+    if (scenes.length > 1) {
+      scenePills.innerHTML = `
+        <button class="script-view-tab-btn ${currentSceneFilter === 'all' ? 'active' : ''}" data-scene="all">All Scenes (${scenes.length})</button>
+      `;
+      // Show first 6 scenes as direct buttons
+      scenes.slice(0, 6).forEach(sc => {
+        scenePills.innerHTML += `
+          <button class="script-view-tab-btn" data-scene="${sc.scene_index}">S${sc.scene_index}</button>
+        `;
+      });
+      if (scenes.length > 6) {
+        scenePills.innerHTML += `
+          <select id="moreScenesSelect" class="sort-select" style="font-size:0.75rem; padding: 4px 8px;">
+            <option value="">More scenes...</option>
+            ${scenes.slice(6).map(sc => `<option value="${sc.scene_index}">Scene ${sc.scene_index} (${sc.line_count} lines)</option>`).join('')}
+          </select>
+        `;
+      }
+
+      scenePills.addEventListener('click', (e) => {
+        const btn = e.target.closest('.script-view-tab-btn');
+        if (!btn) return;
+        scenePills.querySelectorAll('.script-view-tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentSceneFilter = btn.dataset.scene;
+        renderScriptContent(searchInput ? searchInput.value : '');
+      });
+
+      const moreSelect = document.getElementById('moreScenesSelect');
+      if (moreSelect) {
+        moreSelect.addEventListener('change', (e) => {
+          if (!e.target.value) return;
+          scenePills.querySelectorAll('.script-view-tab-btn').forEach(b => b.classList.remove('active'));
+          currentSceneFilter = e.target.value;
+          renderScriptContent(searchInput ? searchInput.value : '');
+        });
+      }
+    }
+
+    // Search filter input listener
+    if (searchInput) {
+      let filterTimeout = null;
+      searchInput.addEventListener('input', (e) => {
+        clearTimeout(filterTimeout);
+        filterTimeout = setTimeout(() => {
+          renderScriptContent(e.target.value);
+        }, 120);
+      });
+    }
+
+    // Initial render
+    renderScriptContent();
+  }
+
+  // 7. Westwood Engine Asset Inspector
+  function renderRawViewer(asset, details) {
+    const exportUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}`;
+    const typeInfo = details.file_type_info || {};
+    const rawMeta = details.raw_inspection || {};
+
+    el.viewerActions.innerHTML = `
+      <a href="${exportUrl}" download="${asset.name}" class="btn btn-primary glow-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        <span>Download File (${formatBytes(asset.size)})</span>
+      </a>
+    `;
+
     el.metaChips.innerHTML = `
+      <div class="meta-chip">Type: <strong>${typeInfo.name || asset.ext}</strong></div>
+      <div class="meta-chip">Archive: <strong>${asset.pak_name}</strong></div>
       <div class="meta-chip">Size: <strong>${formatBytes(asset.size)}</strong></div>
       <div class="meta-chip">Offset: <strong>0x${asset.offset.toString(16).toUpperCase()}</strong></div>
     `;
+
+    // Build spec cards
+    let specCardsHtml = `
+      <div class="inspector-card">
+        <span class="inspector-card-label">Archive Origin</span>
+        <span class="inspector-card-val">${asset.pak_name}</span>
+        <span class="inspector-card-sub">Offset: 0x${asset.offset.toString(16).toUpperCase()}</span>
+      </div>
+      <div class="inspector-card">
+        <span class="inspector-card-label">Byte Size</span>
+        <span class="inspector-card-val">${formatBytes(asset.size)}</span>
+        <span class="inspector-card-sub">${asset.size.toLocaleString()} bytes exact</span>
+      </div>
+    `;
+
+    if (rawMeta.container) {
+      specCardsHtml += `
+        <div class="inspector-card">
+          <span class="inspector-card-label">Container Format</span>
+          <span class="inspector-card-val">${rawMeta.container}</span>
+          <span class="inspector-card-sub">${rawMeta.form_type ? `Form ID: ${rawMeta.form_type}` : 'IFF Resource'}</span>
+        </div>
+      `;
+    }
+
+    if (rawMeta.compression_type) {
+      specCardsHtml += `
+        <div class="inspector-card">
+          <span class="inspector-card-label">Compression</span>
+          <span class="inspector-card-val">${rawMeta.compression_type}</span>
+          <span class="inspector-card-sub">Uncompressed: ${formatBytes(rawMeta.decompressed_size || 0)} (${rawMeta.compression_ratio || ''})</span>
+        </div>
+      `;
+    }
+
+    if (rawMeta.mask_resolution) {
+      specCardsHtml += `
+        <div class="inspector-card">
+          <span class="inspector-card-label">Mask Resolution</span>
+          <span class="inspector-card-val">${rawMeta.mask_resolution}</span>
+          <span class="inspector-card-sub">Action/Hotspot Collision Grid</span>
+        </div>
+      `;
+    }
+
+    if (rawMeta.timeline_opcodes_count !== undefined) {
+      specCardsHtml += `
+        <div class="inspector-card">
+          <span class="inspector-card-label">Timeline Sequence</span>
+          <span class="inspector-card-val">${rawMeta.timeline_opcodes_count} Opcodes</span>
+          <span class="inspector-card-sub">Audio/Visual Animation Keyframes</span>
+        </div>
+      `;
+    }
+
+    if (rawMeta.copyright) {
+      specCardsHtml += `
+        <div class="inspector-card">
+          <span class="inspector-card-label">Driver Signature</span>
+          <span class="inspector-card-val" style="font-size:0.88rem;">${rawMeta.copyright}</span>
+          <span class="inspector-card-sub">Miles Sound System Driver</span>
+        </div>
+      `;
+    }
+
+    // Format chunks list if IFF
+    let chunksHtml = '';
+    if (rawMeta.chunks && rawMeta.chunks.length > 0) {
+      const pills = rawMeta.chunks.map(c => `
+        <span class="chunk-badge-pill">
+          <span>${c.id}</span>
+          <span class="chunk-badge-size">${formatBytes(c.size)}</span>
+        </span>
+      `).join('');
+      chunksHtml = `
+        <div class="inspector-card" style="grid-column: 1 / -1;">
+          <span class="inspector-card-label">IFF Resource Chunks (${rawMeta.chunks.length})</span>
+          <div class="chunk-badges-wrap">${pills}</div>
+        </div>
+      `;
+    }
+
+    // Format Hex / ASCII dump
+    let hexDumpRows = '';
+    if (rawMeta.hex_preview && rawMeta.ascii_preview) {
+      const hex = rawMeta.hex_preview;
+      const asc = rawMeta.ascii_preview;
+      const bytesPerLine = 16;
+      for (let i = 0; i < asc.length; i += bytesPerLine) {
+        const offsetHex = i.toString(16).padStart(4, '0').toUpperCase();
+        const hexSub = hex.slice(i * 2, (i + bytesPerLine) * 2);
+        const bytePairs = [];
+        for (let j = 0; j < hexSub.length; j += 2) {
+          bytePairs.push(hexSub.substr(j, 2).toUpperCase());
+        }
+        const hexFormatted = bytePairs.join(' ').padEnd(48, ' ');
+        const asciiSub = asc.slice(i, i + bytesPerLine);
+        hexDumpRows += `<span class="addr">${offsetHex}:</span>  <span class="bytes">${hexFormatted}</span>  <span class="ascii">${escapeHtml(asciiSub)}</span>\n`;
+      }
+    }
+
+    el.viewerStage.innerHTML = `
+      <div class="inspector-stage">
+        <div class="inspector-hero">
+          <div class="inspector-hero-icon">${details.type_icon || '📁'}</div>
+          <div class="inspector-hero-info">
+            <span class="inspector-hero-subtitle">${details.type_name || asset.ext + ' Asset'}</span>
+            <h2 class="inspector-hero-title">${asset.name}</h2>
+            <p class="inspector-hero-desc">${details.description || 'Westwood Studios proprietary game file.'}</p>
+          </div>
+        </div>
+
+        <div class="inspector-grid">
+          ${specCardsHtml}
+          ${chunksHtml}
+        </div>
+
+        ${hexDumpRows ? `
+          <div class="hex-terminal">
+            <div class="hex-terminal-header">
+              <span class="hex-terminal-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="4 17 10 11 4 5"></polyline>
+                  <line x1="12" y1="19" x2="20" y2="19"></line>
+                </svg>
+                Binary Header Inspection (First ${rawMeta.ascii_preview ? rawMeta.ascii_preview.length : 256} Bytes)
+              </span>
+              <button class="btn btn-sm btn-secondary" id="copyHexBtn" title="Copy raw hex stream">Copy Hex</button>
+            </div>
+            <pre class="hex-dump-code">${hexDumpRows}</pre>
+          </div>
+        ` : ''}
+      </div>
+    `;
+
+    const copyBtn = document.getElementById('copyHexBtn');
+    if (copyBtn && rawMeta.hex_preview) {
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(rawMeta.hex_preview).then(() => {
+          showNotification('Hex stream copied to clipboard!');
+        });
+      });
+    }
+
     el.interactiveControls.innerHTML = '';
   }
 

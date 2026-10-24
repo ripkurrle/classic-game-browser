@@ -6,18 +6,22 @@ import os
 import io
 import json
 import urllib.parse
+import struct
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from typing import Optional, Any, Dict, Tuple
 from PIL import Image
 
 from core.pak import GameRepository
 from core.palette import PaletteManager
+from core.format80 import format80_decode
 from core.cps import decode_cps_data, render_cps_to_png
 from core.shp import decode_shp, ShpModel
 from core.wsa import decode_wsa, WsaAnimation
 from core.xmi2mid import xmi_to_midi, get_midi_metadata
 from core.voc2wav import voc_to_wav
 from core.extractor import BatchExtractor
+from core.script_text import parse_script_file, SCRIPT_EXTENSIONS, LANGUAGE_META
+from core.file_types import get_file_type_info, inspect_raw_asset_data, FILE_TYPE_CATALOG
 
 DEFAULT_GAME_DIR = os.path.abspath(os.path.join(
     os.path.dirname(__file__),
@@ -66,7 +70,12 @@ class KyrandiaState:
         entry = self.repo.get_entry(pak_name, name)
         if not entry:
             return None
-        model = decode_shp(entry.read(), self.pal_manager, pak_name, name)
+        raw = entry.read()
+        if entry.ext.upper() == '.CSH':
+            if len(raw) >= 10:
+                file_sz, comp_type, decomp_sz, pal_sz = struct.unpack('<HHIH', raw[:10])
+                raw = format80_decode(raw[10:], decomp_sz)
+        model = decode_shp(raw, self.pal_manager, pak_name, name)
         if len(self._shp_cache) > 80:
             self._shp_cache.pop(next(iter(self._shp_cache)))
         self._shp_cache[key] = model
@@ -191,19 +200,29 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
     def handle_api_get(self, path: str, query: dict):
         if path == "/api/status":
             counts = {
-                'backgrounds': len(app_state.repo.get_entries_by_ext('.CPS')),
-                'models': len(app_state.repo.get_entries_by_ext('.SHP')),
+                'backgrounds': len(app_state.repo.get_entries_by_ext('.CPS')) + len(app_state.repo.get_entries_by_ext('.CMP')),
+                'models': len(app_state.repo.get_entries_by_ext('.SHP')) + len(app_state.repo.get_entries_by_ext('.CSH')),
                 'animations': len(app_state.repo.get_entries_by_ext('.WSA')),
                 'soundtracks': len(app_state.repo.get_entries_by_ext('.XMI')),
                 'sfx': len(app_state.repo.get_entries_by_ext('.VOC')),
                 'palettes': len(app_state.repo.get_entries_by_ext('.COL')) + len(app_state.repo.get_entries_by_ext('.PAL')),
+                'scripts': len([e for e in app_state.repo.all_entries if e.ext in SCRIPT_EXTENSIONS]),
+                'scripts_en': len([e for e in app_state.repo.all_entries if e.ext in ('.EMC', '.DLE', '.ENG')]),
+                'scripts_fr': len([e for e in app_state.repo.all_entries if e.ext in ('.FMC', '.DLF', '.FRE')]),
+                'scripts_de': len([e for e in app_state.repo.all_entries if e.ext in ('.GMC', '.DLG', '.GER')]),
                 'total_assets': len(app_state.repo.all_entries),
                 'total_paks': len(app_state.repo.paks),
             }
+            ext_counts = {}
+            for e in app_state.repo.all_entries:
+                ext_counts[e.ext] = ext_counts.get(e.ext, 0) + 1
+
             self.send_json_response({
                 'game_dir': app_state.game_dir,
                 'game_title': 'The Legend of Kyrandia 2: Hand of Fate',
                 'counts': counts,
+                'ext_counts': ext_counts,
+                'file_types_catalog': FILE_TYPE_CATALOG,
                 'paks': sorted(list(app_state.repo.paks.keys())),
             })
 
@@ -217,9 +236,9 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             entries = app_state.repo.all_entries
 
             if category == 'backgrounds':
-                entries = [e for e in entries if e.ext == '.CPS']
+                entries = [e for e in entries if e.ext in ('.CPS', '.CMP')]
             elif category == 'models':
-                entries = [e for e in entries if e.ext == '.SHP']
+                entries = [e for e in entries if e.ext in ('.SHP', '.CSH')]
             elif category == 'animations':
                 entries = [e for e in entries if e.ext == '.WSA']
             elif category == 'soundtracks':
@@ -228,6 +247,14 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 entries = [e for e in entries if e.ext == '.VOC']
             elif category == 'palettes':
                 entries = [e for e in entries if e.ext in ('.COL', '.PAL')]
+            elif category == 'scripts':
+                entries = [e for e in entries if e.ext in SCRIPT_EXTENSIONS]
+            elif category == 'scripts_en':
+                entries = [e for e in entries if e.ext in ('.EMC', '.DLE', '.ENG')]
+            elif category == 'scripts_fr':
+                entries = [e for e in entries if e.ext in ('.FMC', '.DLF', '.FRE')]
+            elif category == 'scripts_de':
+                entries = [e for e in entries if e.ext in ('.GMC', '.DLG', '.GER')]
 
             if pak_filter:
                 entries = [e for e in entries if e.pak_name.upper() == pak_filter]
@@ -240,7 +267,17 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             else:
                 entries = sorted(entries, key=lambda e: (e.name.upper(), e.size), reverse=(sort_order == 'desc'))
 
-            results = [e.to_dict() for e in entries]
+            results = []
+            for e in entries:
+                d = e.to_dict()
+                type_info = get_file_type_info(e.ext)
+                d['type_name'] = type_info.get('name')
+                d['type_icon'] = type_info.get('icon')
+                d['viewer_mode'] = type_info.get('viewer_mode')
+                d['tech_specs'] = type_info.get('tech_specs')
+                if e.ext in LANGUAGE_META:
+                    d.update(LANGUAGE_META[e.ext])
+                results.append(d)
             self.send_json_response({'count': len(results), 'assets': results})
 
         elif path == "/api/asset/details":
@@ -252,8 +289,14 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 return
 
             details = entry.to_dict()
+            type_info = get_file_type_info(entry.ext)
+            details['file_type_info'] = type_info
+            details['type_name'] = type_info.get('name')
+            details['type_icon'] = type_info.get('icon')
+            details['tech_specs'] = type_info.get('tech_specs')
+            details['description'] = type_info.get('description')
 
-            if entry.ext == '.CPS':
+            if entry.ext in ('.CPS', '.CMP'):
                 try:
                     raw = entry.read()
                     img = decode_cps_data(raw, app_state.pal_manager, entry.pak_name, entry.name)
@@ -268,7 +311,7 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 except Exception as ex:
                     details['error'] = str(ex)
 
-            elif entry.ext == '.SHP':
+            elif entry.ext in ('.SHP', '.CSH'):
                 try:
                     model = app_state.get_shp(entry.pak_name, entry.name)
                     if model:
@@ -339,6 +382,28 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 except Exception as ex:
                     details['error'] = str(ex)
 
+            elif entry.ext in SCRIPT_EXTENSIONS:
+                try:
+                    raw = entry.read()
+                    script_info = parse_script_file(raw, entry.ext, entry.name)
+                    details['script_data'] = script_info
+                    details['language'] = script_info.get('language')
+                    details['language_name'] = script_info.get('language_name')
+                    details['flag'] = script_info.get('flag')
+                    details['script_type'] = script_info.get('category_label')
+                    details['line_count'] = script_info.get('total_lines')
+                    details['transcript_preview'] = script_info.get('transcript', '')[:500]
+                except Exception as ex:
+                    details['error'] = str(ex)
+
+            else:
+                try:
+                    raw = entry.read()
+                    raw_meta = inspect_raw_asset_data(raw, entry.ext, entry.name)
+                    details['raw_inspection'] = raw_meta
+                except Exception as ex:
+                    details['raw_inspection'] = {'error': str(ex)}
+
             self.send_json_response(details)
 
         elif path == "/api/asset/preview":
@@ -354,11 +419,11 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             as_gif = query.get('gif', ['0'])[0] in ('1', 'true')
 
             try:
-                if entry.ext == '.CPS':
+                if entry.ext in ('.CPS', '.CMP'):
                     png_bytes = render_cps_to_png(entry, app_state.pal_manager)
                     self.send_bytes_response(png_bytes, 'image/png')
 
-                elif entry.ext == '.SHP':
+                elif entry.ext in ('.SHP', '.CSH'):
                     if as_sheet:
                         png_bytes = app_state.get_shp_spritesheet(entry.pak_name, entry.name)
                     else:
@@ -416,11 +481,11 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             base_name = os.path.splitext(entry.name)[0]
 
             try:
-                if entry.ext == '.CPS':
+                if entry.ext in ('.CPS', '.CMP'):
                     png_bytes = render_cps_to_png(entry, app_state.pal_manager)
                     self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}.png", download=True)
 
-                elif entry.ext == '.SHP':
+                elif entry.ext in ('.SHP', '.CSH'):
                     if as_sheet:
                         png_bytes = app_state.get_shp_spritesheet(entry.pak_name, entry.name)
                         self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_spritesheet.png", download=True)
@@ -477,6 +542,16 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                     raw = entry.read()
                     wav = voc_to_wav(raw)
                     self.send_bytes_response(wav, 'audio/wav', filename=f"{base_name}.wav", download=True)
+
+                elif entry.ext in SCRIPT_EXTENSIONS:
+                    raw = entry.read()
+                    export_fmt = query.get('format', ['txt'])[0].lower()
+                    if export_fmt == 'txt':
+                        script_info = parse_script_file(raw, entry.ext, entry.name)
+                        txt_bytes = script_info.get('transcript', '').encode('utf-8')
+                        self.send_bytes_response(txt_bytes, 'text/plain; charset=utf-8', filename=f"{base_name}_{entry.ext.replace('.', '')}.txt", download=True)
+                    else:
+                        self.send_bytes_response(raw, 'application/octet-stream', filename=entry.name, download=True)
 
                 else:
                     raw = entry.read()

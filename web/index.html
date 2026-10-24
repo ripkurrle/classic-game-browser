@@ -95,6 +95,11 @@
           <span class="tab-text">Palettes</span>
           <span class="tab-count" id="countPalettes">0</span>
         </button>
+        <button class="cat-tab" data-category="scripts">
+          <span class="tab-icon">📜</span>
+          <span class="tab-text">Scripts & Dialogue</span>
+          <span class="tab-count" id="countScripts">0</span>
+        </button>
       </div>
 
       <div class="search-filter-controls">
@@ -105,6 +110,15 @@
           </svg>
           <input type="text" id="searchInput" placeholder="Search 1,900+ assets (e.g. Z1, ALLEY, K2TEST)..." autocomplete="off">
           <button id="clearSearchBtn" class="clear-btn" style="display: none;">&times;</button>
+        </div>
+
+        <div class="select-wrapper" id="langFilterWrapper" style="display: none;">
+          <select id="langSelect" title="Filter by language">
+            <option value="scripts">All Languages</option>
+            <option value="scripts_en">🇬🇧 English (EMC, DLE, ENG)</option>
+            <option value="scripts_fr">🇫🇷 French (FMC, DLF, FRE)</option>
+            <option value="scripts_de">🇩🇪 German (GMC, DLG, GER)</option>
+          </select>
         </div>
 
         <div class="select-wrapper">
@@ -278,12 +292,23 @@
           </label>
 
           <label class="export-option-card">
+            <input type="radio" name="batchType" value="scripts">
+            <div class="option-content">
+              <span class="opt-icon">📜</span>
+              <div class="opt-text">
+                <strong>Export All Scripts & Dialogue Transcripts</strong>
+                <span>Exports all 500+ English, French, and German subtitle & dialogue files into organized text transcripts</span>
+              </div>
+            </div>
+          </label>
+
+          <label class="export-option-card">
             <input type="radio" name="batchType" value="all">
             <div class="option-content">
               <span class="opt-icon">🌟</span>
               <div class="opt-text">
                 <strong>Complete Asset Dump (All)</strong>
-                <span>Exports all backgrounds, models, MIDI soundtracks, and audio clips into organized folders</span>
+                <span>Exports all backgrounds, models, MIDI soundtracks, audio clips, and scripts into organized folders</span>
               </div>
             </div>
           </label>

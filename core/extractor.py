@@ -5,16 +5,19 @@ Handles exporting rendered pictures of models and backgrounds, MIDI soundtracks,
 
 import os
 import io
+import struct
 import zipfile
 import threading
 from typing import Dict, Any, Callable, Optional, List
 from .pak import GameRepository, PakEntry
 from .palette import PaletteManager
+from .format80 import format80_decode
 from .cps import decode_cps_data
 from .shp import decode_shp
 from .xmi2mid import xmi_to_midi
 from .voc2wav import voc_to_wav
 from .wsa import decode_wsa
+from .script_text import parse_script_file, SCRIPT_EXTENSIONS
 
 class ExtractionJob:
     def __init__(self, job_type: str, dest_dir: str):
@@ -80,6 +83,8 @@ class BatchExtractor:
                 self._export_models(job)
             elif job.job_type == "midi":
                 self._export_midi(job)
+            elif job.job_type == "scripts":
+                self._export_scripts(job)
             elif job.job_type == "all":
                 self._export_all(job)
             else:
@@ -97,12 +102,12 @@ class BatchExtractor:
             job.message = f"Export failed: {e}"
 
     def _export_backgrounds(self, job: ExtractionJob):
-        cps_entries = self.repo.get_entries_by_ext('.CPS')
-        job.total_items = len(cps_entries)
+        bg_entries = self.repo.get_entries_by_ext('.CPS') + self.repo.get_entries_by_ext('.CMP')
+        job.total_items = len(bg_entries)
         out_folder = os.path.join(job.dest_dir, "backgrounds")
         os.makedirs(out_folder, exist_ok=True)
 
-        for idx, entry in enumerate(cps_entries):
+        for idx, entry in enumerate(bg_entries):
             job.processed_items = idx + 1
             job.progress = (job.processed_items / job.total_items) * 100.0
             job.current_item = f"{entry.pak_name} -> {entry.name}"
@@ -119,7 +124,7 @@ class BatchExtractor:
                 pass
 
     def _export_models(self, job: ExtractionJob):
-        shp_entries = self.repo.get_entries_by_ext('.SHP')
+        shp_entries = self.repo.get_entries_by_ext('.SHP') + self.repo.get_entries_by_ext('.CSH')
         job.total_items = len(shp_entries)
         out_folder = os.path.join(job.dest_dir, "models")
         os.makedirs(out_folder, exist_ok=True)
@@ -131,6 +136,10 @@ class BatchExtractor:
 
             try:
                 raw = entry.read()
+                if entry.ext.upper() == '.CSH':
+                    if len(raw) >= 10:
+                        file_sz, comp_type, decomp_sz, pal_sz = struct.unpack('<HHIH', raw[:10])
+                        raw = format80_decode(raw[10:], decomp_sz)
                 model = decode_shp(raw, self.pal_manager, entry.pak_name, entry.name)
                 base = os.path.splitext(entry.name)[0]
 
@@ -180,19 +189,20 @@ class BatchExtractor:
                 pass
 
     def _export_all(self, job: ExtractionJob):
-        cps_entries = self.repo.get_entries_by_ext('.CPS')
-        shp_entries = self.repo.get_entries_by_ext('.SHP')
+        bg_entries = self.repo.get_entries_by_ext('.CPS') + self.repo.get_entries_by_ext('.CMP')
+        shp_entries = self.repo.get_entries_by_ext('.SHP') + self.repo.get_entries_by_ext('.CSH')
         xmi_entries = self.repo.get_entries_by_ext('.XMI')
         voc_entries = self.repo.get_entries_by_ext('.VOC')
+        script_entries = [e for e in self.repo.all_entries if e.ext in SCRIPT_EXTENSIONS]
 
-        total = len(cps_entries) + len(shp_entries) + len(xmi_entries) + len(voc_entries)
+        total = len(bg_entries) + len(shp_entries) + len(xmi_entries) + len(voc_entries) + len(script_entries)
         job.total_items = total
         step = 0
 
         # Export backgrounds
         bg_folder = os.path.join(job.dest_dir, "backgrounds")
         os.makedirs(bg_folder, exist_ok=True)
-        for entry in cps_entries:
+        for entry in bg_entries:
             step += 1
             job.processed_items = step
             job.progress = (step / total) * 100.0
@@ -217,6 +227,10 @@ class BatchExtractor:
             job.current_item = f"Model: {entry.name}"
             try:
                 raw = entry.read()
+                if entry.ext.upper() == '.CSH':
+                    if len(raw) >= 10:
+                        file_sz, comp_type, decomp_sz, pal_sz = struct.unpack('<HHIH', raw[:10])
+                        raw = format80_decode(raw[10:], decomp_sz)
                 model = decode_shp(raw, self.pal_manager, entry.pak_name, entry.name)
                 base = os.path.splitext(entry.name)[0]
                 sheet_data = model.render_spritesheet_png()
@@ -265,3 +279,44 @@ class BatchExtractor:
                     job.extracted_files.append(out_path)
             except Exception:
                 pass
+
+        # Export Scripts and Dialogue Transcripts
+        self._export_scripts_internal(job, step, total)
+
+    def _export_scripts(self, job: ExtractionJob):
+        script_entries = [e for e in self.repo.all_entries if e.ext in SCRIPT_EXTENSIONS]
+        job.total_items = len(script_entries)
+        self._export_scripts_internal(job, 0, len(script_entries))
+
+    def _export_scripts_internal(self, job: ExtractionJob, start_step: int, total_items: int):
+        script_entries = [e for e in self.repo.all_entries if e.ext in SCRIPT_EXTENSIONS]
+        scripts_folder = os.path.join(job.dest_dir, "scripts_dialogue")
+        os.makedirs(scripts_folder, exist_ok=True)
+
+        step = start_step
+        for entry in script_entries:
+            step += 1
+            job.processed_items = step
+            job.progress = (step / total_items) * 100.0
+            job.current_item = f"Script: {entry.name}"
+
+            try:
+                data = entry.read()
+                parsed = parse_script_file(data, entry.ext, entry.name)
+                lang_sub = parsed.get('language_name', 'General').lower()
+                lang_dir = os.path.join(scripts_folder, lang_sub)
+                os.makedirs(lang_dir, exist_ok=True)
+
+                base = os.path.splitext(entry.name)[0]
+                out_name = f"{base}_{entry.ext.replace('.', '')}.txt"
+                out_path = os.path.join(lang_dir, out_name)
+
+                with open(out_path, 'w', encoding='utf-8') as f:
+                    f.write(f"# {entry.name} - {parsed.get('category_label', 'Script')}\n")
+                    f.write(f"# Language: {parsed.get('language_name', 'Unknown')} {parsed.get('flag', '')}\n")
+                    f.write(f"# Archive: {entry.pak_name}\n\n")
+                    f.write(parsed.get('transcript', ''))
+                job.extracted_files.append(out_path)
+            except Exception:
+                pass
+
