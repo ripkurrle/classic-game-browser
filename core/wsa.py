@@ -33,6 +33,23 @@ class WsaAnimation:
         img.save(buf, format='PNG')
         return buf.getvalue()
 
+    def render_spritesheet_png(self, max_cols: int = 8) -> Tuple[bytes, int, int]:
+        """Generates a tiled sprite sheet image containing all frames. Returns (png_bytes, cols, rows)."""
+        if not self.frames_rgba or self.width <= 0 or self.height <= 0:
+            return b"", 0, 0
+        num = len(self.frames_rgba)
+        cols = min(num, max_cols)
+        rows = (num + cols - 1) // cols
+        sheet = Image.new('RGBA', (cols * self.width, rows * self.height), (0, 0, 0, 0))
+        for i in range(num):
+            c = i % cols
+            r = i // cols
+            frame_img = self.get_frame_image(i)
+            sheet.paste(frame_img, (c * self.width, r * self.height))
+        buf = io.BytesIO()
+        sheet.save(buf, format='PNG')
+        return buf.getvalue(), cols, rows
+
     def render_gif(self, duration_ms: int = 100) -> bytes:
         """Exports the animation as an animated GIF."""
         if not self.frames_rgba:

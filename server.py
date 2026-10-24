@@ -6,13 +6,13 @@ import os
 import json
 import urllib.parse
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-from typing import Optional, Any
+from typing import Optional, Any, Dict, Tuple
 
 from core.pak import GameRepository
 from core.palette import PaletteManager
 from core.cps import decode_cps_data, render_cps_to_png
-from core.shp import decode_shp
-from core.wsa import decode_wsa
+from core.shp import decode_shp, ShpModel
+from core.wsa import decode_wsa, WsaAnimation
 from core.xmi2mid import xmi_to_midi, get_midi_metadata
 from core.voc2wav import voc_to_wav
 from core.extractor import BatchExtractor
@@ -29,12 +29,98 @@ class KyrandiaState:
         self.repo = GameRepository(game_dir)
         self.pal_manager = PaletteManager(self.repo)
         self.extractor = BatchExtractor(self.repo, self.pal_manager)
+        self._wsa_cache: Dict[str, WsaAnimation] = {}
+        self._shp_cache: Dict[str, ShpModel] = {}
+        self._frame_png_cache: Dict[str, bytes] = {}
+        self._sheet_cache: Dict[str, Tuple[bytes, int, int]] = {}
 
     def set_directory(self, new_dir: str):
         self.game_dir = os.path.abspath(new_dir)
         self.repo = GameRepository(self.game_dir)
         self.pal_manager = PaletteManager(self.repo)
         self.extractor = BatchExtractor(self.repo, self.pal_manager)
+        self._wsa_cache.clear()
+        self._shp_cache.clear()
+        self._frame_png_cache.clear()
+        self._sheet_cache.clear()
+
+    def get_wsa(self, pak_name: str, name: str) -> Optional[WsaAnimation]:
+        key = f"{pak_name}:{name}".upper()
+        if key in self._wsa_cache:
+            return self._wsa_cache[key]
+        entry = self.repo.get_entry(pak_name, name)
+        if not entry:
+            return None
+        anim = decode_wsa(entry.read(), self.pal_manager, pak_name, name)
+        if len(self._wsa_cache) > 80:
+            self._wsa_cache.pop(next(iter(self._wsa_cache)))
+        self._wsa_cache[key] = anim
+        return anim
+
+    def get_shp(self, pak_name: str, name: str) -> Optional[ShpModel]:
+        key = f"{pak_name}:{name}".upper()
+        if key in self._shp_cache:
+            return self._shp_cache[key]
+        entry = self.repo.get_entry(pak_name, name)
+        if not entry:
+            return None
+        model = decode_shp(entry.read(), self.pal_manager, pak_name, name)
+        if len(self._shp_cache) > 80:
+            self._shp_cache.pop(next(iter(self._shp_cache)))
+        self._shp_cache[key] = model
+        return model
+
+    def get_wsa_frame_png(self, pak_name: str, name: str, frame_idx: int) -> bytes:
+        key = f"WSA_FRAME:{pak_name}:{name}:{frame_idx}".upper()
+        if key in self._frame_png_cache:
+            return self._frame_png_cache[key]
+        anim = self.get_wsa(pak_name, name)
+        if not anim:
+            return b""
+        png = anim.render_frame_png(frame_idx)
+        if len(self._frame_png_cache) > 1000:
+            self._frame_png_cache.pop(next(iter(self._frame_png_cache)))
+        self._frame_png_cache[key] = png
+        return png
+
+    def get_shp_frame_png(self, pak_name: str, name: str, frame_idx: int) -> bytes:
+        key = f"SHP_FRAME:{pak_name}:{name}:{frame_idx}".upper()
+        if key in self._frame_png_cache:
+            return self._frame_png_cache[key]
+        model = self.get_shp(pak_name, name)
+        if not model:
+            return b""
+        png = model.render_frame_png(frame_idx)
+        if len(self._frame_png_cache) > 1000:
+            self._frame_png_cache.pop(next(iter(self._frame_png_cache)))
+        self._frame_png_cache[key] = png
+        return png
+
+    def get_wsa_spritesheet(self, pak_name: str, name: str) -> Tuple[bytes, int, int]:
+        key = f"WSA_SHEET:{pak_name}:{name}".upper()
+        if key in self._sheet_cache:
+            return self._sheet_cache[key]
+        anim = self.get_wsa(pak_name, name)
+        if not anim:
+            return b"", 0, 0
+        sheet_bytes, cols, rows = anim.render_spritesheet_png()
+        if len(self._sheet_cache) > 80:
+            self._sheet_cache.pop(next(iter(self._sheet_cache)))
+        self._sheet_cache[key] = (sheet_bytes, cols, rows)
+        return sheet_bytes, cols, rows
+
+    def get_shp_spritesheet(self, pak_name: str, name: str) -> bytes:
+        key = f"SHP_SHEET:{pak_name}:{name}".upper()
+        if key in self._frame_png_cache:
+            return self._frame_png_cache[key]
+        model = self.get_shp(pak_name, name)
+        if not model:
+            return b""
+        sheet_bytes = model.render_spritesheet_png()
+        if len(self._frame_png_cache) > 1000:
+            self._frame_png_cache.pop(next(iter(self._frame_png_cache)))
+        self._frame_png_cache[key] = sheet_bytes
+        return sheet_bytes
 
 app_state = KyrandiaState(DEFAULT_GAME_DIR)
 
@@ -166,24 +252,28 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
 
             elif entry.ext == '.SHP':
                 try:
-                    raw = entry.read()
-                    model = decode_shp(raw, app_state.pal_manager, entry.pak_name, entry.name)
-                    details['num_frames'] = model.num_frames
-                    details['max_width'] = model.max_width
-                    details['max_height'] = model.max_height
-                    details['frame_sizes'] = [[f.width, f.height] for f in model.frames]
+                    model = app_state.get_shp(entry.pak_name, entry.name)
+                    if model:
+                        details['num_frames'] = model.num_frames
+                        details['max_width'] = model.max_width
+                        details['max_height'] = model.max_height
+                        details['frame_sizes'] = [[f.width, f.height] for f in model.frames]
+                        details['sheet_cols'] = min(model.num_frames, 8)
+                        details['sheet_rows'] = (model.num_frames + details['sheet_cols'] - 1) // details['sheet_cols'] if details['sheet_cols'] > 0 else 0
                 except Exception as ex:
                     details['error'] = str(ex)
 
             elif entry.ext == '.WSA':
                 try:
-                    raw = entry.read()
-                    anim = decode_wsa(raw, app_state.pal_manager, entry.pak_name, entry.name)
-                    details['num_frames'] = anim.num_frames
-                    details['width'] = anim.width
-                    details['height'] = anim.height
-                    details['pos_x'] = anim.x_add
-                    details['pos_y'] = anim.y_add
+                    anim = app_state.get_wsa(entry.pak_name, entry.name)
+                    if anim:
+                        details['num_frames'] = anim.num_frames
+                        details['width'] = anim.width
+                        details['height'] = anim.height
+                        details['pos_x'] = anim.x_add
+                        details['pos_y'] = anim.y_add
+                        details['sheet_cols'] = min(anim.num_frames, 8)
+                        details['sheet_rows'] = (anim.num_frames + details['sheet_cols'] - 1) // details['sheet_cols'] if details['sheet_cols'] > 0 else 0
                 except Exception as ex:
                     details['error'] = str(ex)
 
@@ -224,22 +314,22 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                     self.send_bytes_response(png_bytes, 'image/png')
 
                 elif entry.ext == '.SHP':
-                    raw = entry.read()
-                    model = decode_shp(raw, app_state.pal_manager, entry.pak_name, entry.name)
                     if as_sheet:
-                        png_bytes = model.render_spritesheet_png()
+                        png_bytes = app_state.get_shp_spritesheet(entry.pak_name, entry.name)
                     else:
-                        png_bytes = model.render_frame_png(frame_idx)
+                        png_bytes = app_state.get_shp_frame_png(entry.pak_name, entry.name, frame_idx)
                     self.send_bytes_response(png_bytes, 'image/png')
 
                 elif entry.ext == '.WSA':
-                    raw = entry.read()
-                    anim = decode_wsa(raw, app_state.pal_manager, entry.pak_name, entry.name)
-                    if as_gif:
-                        gif_bytes = anim.render_gif()
+                    if as_sheet:
+                        png_bytes, cols, rows = app_state.get_wsa_spritesheet(entry.pak_name, entry.name)
+                        self.send_bytes_response(png_bytes, 'image/png')
+                    elif as_gif:
+                        anim = app_state.get_wsa(entry.pak_name, entry.name)
+                        gif_bytes = anim.render_gif() if anim else b""
                         self.send_bytes_response(gif_bytes, 'image/gif')
                     else:
-                        png_bytes = anim.render_frame_png(frame_idx)
+                        png_bytes = app_state.get_wsa_frame_png(entry.pak_name, entry.name, frame_idx)
                         self.send_bytes_response(png_bytes, 'image/png')
 
                 elif entry.ext == '.XMI':
@@ -278,23 +368,23 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                     self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}.png", download=True)
 
                 elif entry.ext == '.SHP':
-                    raw = entry.read()
-                    model = decode_shp(raw, app_state.pal_manager, entry.pak_name, entry.name)
                     if as_sheet:
-                        png_bytes = model.render_spritesheet_png()
+                        png_bytes = app_state.get_shp_spritesheet(entry.pak_name, entry.name)
                         self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_spritesheet.png", download=True)
                     else:
-                        png_bytes = model.render_frame_png(frame_idx)
+                        png_bytes = app_state.get_shp_frame_png(entry.pak_name, entry.name, frame_idx)
                         self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_frame{frame_idx}.png", download=True)
 
                 elif entry.ext == '.WSA':
-                    raw = entry.read()
-                    anim = decode_wsa(raw, app_state.pal_manager, entry.pak_name, entry.name)
-                    if as_gif:
-                        gif_bytes = anim.render_gif()
+                    if as_sheet:
+                        png_bytes, cols, rows = app_state.get_wsa_spritesheet(entry.pak_name, entry.name)
+                        self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_spritesheet.png", download=True)
+                    elif as_gif:
+                        anim = app_state.get_wsa(entry.pak_name, entry.name)
+                        gif_bytes = anim.render_gif() if anim else b""
                         self.send_bytes_response(gif_bytes, 'image/gif', filename=f"{base_name}.gif", download=True)
                     else:
-                        png_bytes = anim.render_frame_png(frame_idx)
+                        png_bytes = app_state.get_wsa_frame_png(entry.pak_name, entry.name, frame_idx)
                         self.send_bytes_response(png_bytes, 'image/png', filename=f"{base_name}_frame{frame_idx}.png", download=True)
 
                 elif entry.ext == '.XMI':

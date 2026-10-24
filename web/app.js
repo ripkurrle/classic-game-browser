@@ -544,9 +544,22 @@
     const frameIndicator = document.getElementById('frameIndicator');
     const exportCurFrameBtn = document.getElementById('exportCurFrameBtn');
 
+    // Preload model frames in memory
+    const modelFrameCache = new Map();
+    for (let i = 0; i < Math.min(numFrames, 64); i++) {
+      const img = new Image();
+      img.src = `/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${i}`;
+      modelFrameCache.set(i, img);
+    }
+
     function updateModelFrame(idx) {
       state.modelCurrentFrame = (idx + numFrames) % numFrames;
-      modelImg.src = `/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${state.modelCurrentFrame}`;
+      const targetUrl = `/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${state.modelCurrentFrame}`;
+      if (modelFrameCache.has(state.modelCurrentFrame) && modelFrameCache.get(state.modelCurrentFrame).complete) {
+        modelImg.src = modelFrameCache.get(state.modelCurrentFrame).src;
+      } else {
+        modelImg.src = targetUrl;
+      }
       modelScrubber.value = state.modelCurrentFrame;
       frameIndicator.textContent = `${state.modelCurrentFrame + 1} / ${numFrames}`;
       exportCurFrameBtn.href = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${state.modelCurrentFrame}`;
@@ -596,17 +609,25 @@
   // 3. Animation Viewer (.WSA)
   function renderAnimationViewer(asset, details) {
     const numFrames = details.num_frames || 1;
+    const width = details.width || 320;
+    const height = details.height || 200;
+    const sheetCols = details.sheet_cols || Math.min(numFrames, 8);
     state.animCurrentFrame = 0;
     state.animPlaying = false;
 
     const baseName = asset.name.replace('.WSA', '');
     const exportFrameUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${state.animCurrentFrame}`;
     const exportGifUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&gif=1`;
+    const exportSheetUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&sheet=1`;
 
     el.viewerActions.innerHTML = `
       <a id="exportAnimFrameBtn" href="${exportFrameUrl}" download="${baseName}_frame0.png" class="btn btn-secondary">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
         <span>Export Current Frame (PNG)</span>
+      </a>
+      <a href="${exportSheetUrl}" download="${baseName}_spritesheet.png" class="btn btn-secondary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+        <span>Export Sheet</span>
       </a>
       <a href="${exportGifUrl}" download="${baseName}.gif" class="btn btn-primary glow-btn">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
@@ -615,14 +636,14 @@
     `;
 
     el.viewerStage.innerHTML = `
-      <div class="image-viewport-wrap bg-checker" style="padding: 20px;">
-        <img id="animImg" src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=0" class="display-canvas" style="transform: scale(2);" alt="${asset.name}">
+      <div class="image-viewport-wrap bg-checker" id="animWrap" style="padding: 24px; margin: auto; min-width: 240px; min-height: 240px;">
+        <canvas id="animCanvas" width="${width}" height="${height}" class="display-canvas" style="transform: scale(2); image-rendering: pixelated;" alt="${asset.name}"></canvas>
       </div>
     `;
 
     el.metaChips.innerHTML = `
       <div class="meta-chip">Total Frames: <strong id="animFrameInd">1 / ${numFrames}</strong></div>
-      <div class="meta-chip">Dimensions: <strong>${details.width || 0}x${details.height || 0} px</strong></div>
+      <div class="meta-chip">Dimensions: <strong>${width}x${height} px</strong></div>
       <div class="meta-chip">Scene Offset: <strong>(${details.pos_x || 0}, ${details.pos_y || 0})</strong></div>
     `;
 
@@ -634,21 +655,85 @@
         <button class="ctrl-btn" id="animPrevBtn">⏮</button>
         <input type="range" class="scrubber-slider" id="animScrubber" min="0" max="${numFrames - 1}" value="0">
         <button class="ctrl-btn" id="animNextBtn">⏭</button>
+
+        <select class="speed-select" id="animSpeedSelect">
+          <option value="4">4 FPS</option>
+          <option value="6">6 FPS</option>
+          <option value="8">8 FPS</option>
+          <option value="10" selected>10 FPS</option>
+          <option value="12">12 FPS</option>
+          <option value="16">16 FPS</option>
+          <option value="24">24 FPS</option>
+        </select>
       </div>
     `;
 
-    const animImg = document.getElementById('animImg');
+    const canvas = document.getElementById('animCanvas');
+    const ctx = canvas ? canvas.getContext('2d') : null;
     const animScrubber = document.getElementById('animScrubber');
     const animFrameInd = document.getElementById('animFrameInd');
     const exportAnimFrameBtn = document.getElementById('exportAnimFrameBtn');
 
-    function updateAnimFrame(idx) {
+    // Preload spritesheet for instant 60fps zero-network playback
+    const sheetImg = new Image();
+    let sheetReady = false;
+    sheetImg.onload = () => {
+      sheetReady = true;
+      drawAnimFrame(state.animCurrentFrame);
+    };
+    sheetImg.src = `/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&sheet=1`;
+
+    // Fallback single-frame cache
+    const frameCache = new Map();
+    function getFallbackFrame(idx, cb) {
+      if (frameCache.has(idx)) {
+        cb(frameCache.get(idx));
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        frameCache.set(idx, img);
+        cb(img);
+      };
+      img.src = `/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${idx}`;
+    }
+
+    // Initial render of frame 0
+    getFallbackFrame(0, (img) => {
+      if (!sheetReady && ctx) {
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+      }
+    });
+
+    function drawAnimFrame(idx) {
       state.animCurrentFrame = (idx + numFrames) % numFrames;
-      animImg.src = `/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${state.animCurrentFrame}`;
       animScrubber.value = state.animCurrentFrame;
       animFrameInd.textContent = `${state.animCurrentFrame + 1} / ${numFrames}`;
       exportAnimFrameBtn.href = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${state.animCurrentFrame}`;
       exportAnimFrameBtn.download = `${baseName}_frame${state.animCurrentFrame}.png`;
+
+      if (!ctx) return;
+      if (sheetReady) {
+        const c = state.animCurrentFrame % sheetCols;
+        const r = Math.floor(state.animCurrentFrame / sheetCols);
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(sheetImg, c * width, r * height, width, height, 0, 0, width, height);
+      } else {
+        getFallbackFrame(state.animCurrentFrame, (img) => {
+          if (!sheetReady && ctx) {
+            ctx.clearRect(0, 0, width, height);
+            ctx.drawImage(img, 0, 0, width, height);
+          }
+        });
+      }
+    }
+
+    function startAnimPlayback() {
+      if (state.animTimer) clearInterval(state.animTimer);
+      state.animTimer = setInterval(() => {
+        drawAnimFrame(state.animCurrentFrame + 1);
+      }, 1000 / state.animFps);
     }
 
     document.getElementById('animPlayBtn').addEventListener('click', (e) => {
@@ -658,17 +743,22 @@
         : `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
 
       if (state.animPlaying) {
-        state.animTimer = setInterval(() => {
-          updateAnimFrame(state.animCurrentFrame + 1);
-        }, 1000 / state.animFps);
+        startAnimPlayback();
       } else {
         clearInterval(state.animTimer);
       }
     });
 
-    document.getElementById('animPrevBtn').addEventListener('click', () => updateAnimFrame(state.animCurrentFrame - 1));
-    document.getElementById('animNextBtn').addEventListener('click', () => updateAnimFrame(state.animCurrentFrame + 1));
-    animScrubber.addEventListener('input', (e) => updateAnimFrame(parseInt(e.target.value)));
+    document.getElementById('animPrevBtn').addEventListener('click', () => drawAnimFrame(state.animCurrentFrame - 1));
+    document.getElementById('animNextBtn').addEventListener('click', () => drawAnimFrame(state.animCurrentFrame + 1));
+    animScrubber.addEventListener('input', (e) => drawAnimFrame(parseInt(e.target.value)));
+
+    document.getElementById('animSpeedSelect').addEventListener('change', (e) => {
+      state.animFps = parseInt(e.target.value);
+      if (state.animPlaying) {
+        startAnimPlayback();
+      }
+    });
   }
 
   // 4. MIDI Soundtrack Viewer (.XMI)
