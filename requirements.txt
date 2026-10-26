@@ -1,0 +1,5 @@
+# Classic Game Browser - Python Dependencies
+# The Legend of Kyrandia: Book Two - The Hand of Fate Asset Studio
+
+# Core imaging and bitmap export library (required)
+Pillow>=9.0.0

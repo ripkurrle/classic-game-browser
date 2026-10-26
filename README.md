@@ -1,6 +1,47 @@
 # Kyrandia 2: Hand of Fate — Asset Studio & Extractor
 
-A desktop application designed to explore and extract assets from Westwood Studios' classic 1993 adventure game **The Legend of Kyrandia: Book Two — The Hand of Fate**.
+A modern desktop application and web studio designed to explore, inspect, and extract assets from Westwood Studios' classic 1993 adventure game **The Legend of Kyrandia: Book Two — The Hand of Fate**.
+
+---
+
+## ⚡ Quick Start (60 Seconds)
+
+No complex build tools or setup needed. Only **Python 3.8+** is required. The launcher automatically installs the sole lightweight dependency (`Pillow`).
+
+### 🐧 Linux & 🍏 macOS
+Open a terminal in the folder and run:
+```bash
+./run.sh
+```
+*(To open directly in your web browser instead of the native window, use `./run.sh --browser`)*
+
+### 🪟 Windows
+Double-click **`run.bat`** in File Explorer, or open PowerShell and run:
+```powershell
+.\run.ps1
+```
+
+### 🐍 Standard Python (Any Platform)
+```bash
+pip install -r requirements.txt
+python app.py
+```
+*The app automatically starts on `http://127.0.0.1:8080` with zero configuration!*
+
+---
+
+## 🧭 In-App Help & Quick Jump
+
+- 🌟 **Featured Scenes Gallery**: Click **"🌟 Featured Scenes"** in the top navigation bar to jump directly into iconic locations (Zanthia's Home, Cauldron Room, Swamp Bridge, Yeti sequence, Gold Font, Title Theme).
+- ❓ **Interactive User Guide**: Click **"❓ Help & Guide"** (or press <kbd>?</kbd>) anytime for built-in guides on scene compositing, font rendering, audio playback, and Westwood file format specifications.
+- ⌨️ **Keyboard Navigation**:
+  | Shortcut | Action |
+  | :--- | :--- |
+  | <kbd>↓</kbd> / <kbd>↑</kbd> | Move to next / previous asset in the current category |
+  | <kbd>Space</kbd> | Toggle Play / Pause on animations (.WSA) and models (.SHP) |
+  | <kbd>/</kbd> | Instantly focus the search bar |
+  | <kbd>?</kbd> | Open the Help & User Guide |
+  | <kbd>Esc</kbd> | Close any open modal (Help, Featured Scenes, Export Center) |
 
 ---
 
@@ -43,18 +84,24 @@ A desktop application designed to explore and extract assets from Westwood Studi
 
 - 🔬 **Westwood Engine Asset Inspector (27 File Types Supported)**:
   - Full taxonomy and deep inspection for all 27 Westwood proprietary file formats:
-    - **`.CMP`**: Full-screen cinematic cutscene backgrounds (`SCENE2.CMP`, `SCENE3.CMP`) rendered via Format 80.
+    - **`.CMP`**: Cutscene cross-fade transition color tables (`SCENE2.CMP`, `SCENE3.CMP`) classified under hidden non-useful files. Replaces visual preview with complete engine technical specifications, 3-step fade mechanics, and 64.0 KB uncompressed table download (`.BIN`).
     - **`.CSH`**: Compressed shape archives (`_ITEMS.CSH` 180 item icons, `_BUTTONS.CSH` 15 buttons, `_MOUSE.CSH` 9 cursors).
     - **`.TIM`**: Animation voice timeline & speech sync sequence opcodes (`AVFS` / `AVTL` chunks).
     - **`.MSC`**: 320×144 scene hotspot, pathfinding, and depth collision masks.
-    - **`.ADL` & `.C55` & `.PCS`**: AdLib OPL2/OPL3 FM sound banks, Roland Sound Canvas (SCC-55) / MT-32 sysex banks, and PC Speaker sound banks.
+    - **`.ADL` & `.C55` & `.PCS`**: AdLib OPL2/OPL3 FM sound banks, Roland Sound Canvas (SCC-55) / MT-32 sysex banks, and PC Speaker sound banks (`.ADL` and `.C55` classified under hidden non-useful files).
     - **`.ADV` & `.DRV`**: Miles Sound System audio device drivers and real-mode hardware drivers.
-    - **`.FNT` & `.DAT`**: Westwood DOS bitmap fonts and item height calibration tables.
+    - **`.FNT` & `.DAT`**: Westwood DOS bitmap fonts (`GOLDFONT.FNT`, `6.FNT`, `8FAT.FNT`, `BOOKFONT.FNT`) and item height calibration tables (`_ITEMHT.DAT` classified under hidden non-useful files).
   - Interactive binary hex terminal with side-by-side ASCII dump and quick-copy hex tool.
+
+- 🔤 **Westwood Font Viewer (.FNT)**:
+  - Deep decoding for Westwood Font Format v3 (4bpp variable-width bitmap fonts).
+  - Live interactive text typing sandbox with real-time bitmap font rendering, zoom scale (1x–4x), tracking, and line spacing.
+  - 5 retro color themes (Kyrandia Gold, Dialogue White, Amber, Cyan, Emerald) and one-click 16-column Font Sheet (PNG) export.
+  - Direct Format 80 uncompressed downloads for `.CMP` (to `.BIN`) and `.CSH` (to `.SHP`).
 
 - 📦 **Batch Export Center**:
   - One-click batch export via GUI or command-line:
-    - **Export All Backgrounds (PNG)** (including `.CMP`)
+    - **Export All Backgrounds (PNG)** (.CPS scenes)
     - **Export All Models & Sprites (PNG)** (including `.CSH`)
     - **Export All Soundtracks (MIDI)**
     - **Export All Scripts & Dialogue (TXT)** (English, French, German)
@@ -124,6 +171,7 @@ classic-game-browser/
 │   ├── cps.py           # .CPS & .CMP background picture renderer (PNG)
 │   ├── shp.py           # .SHP & .CSH model / character sprite renderer (PNG)
 │   ├── wsa.py           # .WSA animation player & GIF/PNG exporter
+│   ├── fnt.py           # .FNT Westwood bitmap font decoder, glyph map & renderer
 │   ├── xmi2mid.py       # Miles Sound System XMIDI to Standard MIDI converter
 │   ├── voc2wav.py       # Creative Voice (.VOC) to WAV converter
 │   ├── script_text.py   # Multilingual dialogue, subtitle & DTE string decompressor
@@ -172,3 +220,11 @@ Auto-detected at:
   - **1 PCS**: PC Speaker 1-bit sound effect bank (`K2SFX.PCS`)
   - **1 DAT**: Dimension lookup calibration table (`_ITEMHT.DAT`)
   - **1 PAL**: Specialized title screen color palette (`K2TITLE.PAL`)
+
+---
+
+## 📜 Attribution & Sources
+
+- **Attribution & Credits**: See [`ATTRIBUTION.md`](file:///home/user1/ws/classic-game-browser/ATTRIBUTION.md) for original game credits, legal notices, and third-party open-source licenses.
+- **Technical Sources & References**: See [`SOURCES.md`](file:///home/user1/ws/classic-game-browser/SOURCES.md) for the complete breakdown of reverse-engineering repositories, format specifications, algorithm references, and problem report investigations.
+

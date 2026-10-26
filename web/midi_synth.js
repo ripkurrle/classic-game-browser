@@ -1,39 +1,59 @@
 /**
  * Lightweight Web Audio API MIDI Synthesizer & Player for Kyrandia 2 soundtracks.
- * Zero-dependency pure JavaScript player.
+ * Features:
+ * - Real-time lookahead scheduling: avoids overwhelming the Web Audio thread with thousands of nodes
+ * - Clean note envelope with smooth linear ramps (no exponential ramp errors)
+ * - Dynamics compressor to prevent polyphonic clipping and digital overs
+ * - Automatic voice cleanup on note completion (zero node leaks)
+ * - Accurate time-position tracking and scrubbing support
+ * - AnalyserNode for live audio visualizer
  */
 
 class WebMidiPlayer {
   constructor() {
     this.audioCtx = null;
     this.isPlaying = false;
-    this.currentMidData = null;
-    this.events = [];
+    this.notes = [];
     this.durationSec = 0;
     this.currentTimeSec = 0;
-    this.activeVoices = [];
-    this.timerId = null;
+    this.audioStartTime = 0;
+    this.playbackStartSec = 0;
+    this.nextNoteIdx = 0;
+    this.activeVoices = new Set();
+    this.schedulerTimer = null;
     this.onProgress = null;
     this.onEnd = null;
+    this.onBpmChange = null;
     this.masterGain = null;
+    this.compressor = null;
     this.analyser = null;
-    this.channels = {};
-    for (let c = 0; c < 16; c++) {
-      this.channels[c] = { program: 0, volume: 1.0, pan: 0.0 };
-    }
+
+    this.baseBpm = 120;
+    this.currentBpm = 120;
+    this.playbackRate = 1.0;
   }
 
   initAudio() {
     if (!this.audioCtx) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       this.audioCtx = new AudioContext();
+
       this.masterGain = this.audioCtx.createGain();
-      this.masterGain.gain.setValueAtTime(0.7, this.audioCtx.currentTime);
+      this.masterGain.gain.setValueAtTime(0.65, this.audioCtx.currentTime);
+
+      // Dynamics compressor prevents distortion and clipping when many voices play simultaneously
+      this.compressor = this.audioCtx.createDynamicsCompressor();
+      this.compressor.threshold.setValueAtTime(-14, this.audioCtx.currentTime);
+      this.compressor.knee.setValueAtTime(10, this.audioCtx.currentTime);
+      this.compressor.ratio.setValueAtTime(8, this.audioCtx.currentTime);
+      this.compressor.attack.setValueAtTime(0.003, this.audioCtx.currentTime);
+      this.compressor.release.setValueAtTime(0.15, this.audioCtx.currentTime);
 
       this.analyser = this.audioCtx.createAnalyser();
       this.analyser.fftSize = 64;
 
-      this.masterGain.connect(this.analyser);
+      this.masterGain.connect(this.compressor);
+      this.compressor.connect(this.analyser);
       this.analyser.connect(this.audioCtx.destination);
     }
     if (this.audioCtx.state === 'suspended') {
@@ -43,24 +63,68 @@ class WebMidiPlayer {
 
   loadMidi(arrayBuffer) {
     this.stop();
-    this.events = this.parseMidi(new Uint8Array(arrayBuffer));
-    if (this.events.length > 0) {
-      this.durationSec = this.events[this.events.length - 1].timeSec;
+    const parsed = this.parseMidi(new Uint8Array(arrayBuffer));
+    this.notes = parsed.notes || [];
+    this.baseBpm = parsed.baseBpm || 120;
+    this.currentBpm = this.baseBpm;
+    this.playbackRate = 1.0;
+    if (this.notes.length > 0) {
+      this.durationSec = Math.max(...this.notes.map(n => n.startSec + n.durSec));
     } else {
       this.durationSec = 0;
     }
     this.currentTimeSec = 0;
+    this.playbackStartSec = 0;
+    this.nextNoteIdx = 0;
+    if (this.onBpmChange) {
+      this.onBpmChange(this.currentBpm, this.baseBpm, this.playbackRate);
+    }
+  }
+
+  setBpm(newBpm) {
+    const val = Math.max(20, Math.min(360, Math.round(Number(newBpm) || this.baseBpm)));
+    if (!isFinite(val) || val === this.currentBpm) return;
+
+    if (this.isPlaying && this.audioCtx) {
+      const elapsed = this.audioCtx.currentTime - this.audioStartTime;
+      const currentPos = Math.min(this.durationSec, this.playbackStartSec + (elapsed * this.playbackRate));
+
+      for (const voice of this.activeVoices) {
+        try {
+          voice.osc.stop();
+          voice.osc.disconnect();
+          voice.gain.disconnect();
+        } catch (e) {}
+      }
+      this.activeVoices.clear();
+
+      this.currentTimeSec = currentPos;
+      this.playbackStartSec = currentPos;
+      this.audioStartTime = this.audioCtx.currentTime;
+      this.currentBpm = val;
+      this.playbackRate = this.baseBpm > 0 ? (this.currentBpm / this.baseBpm) : 1.0;
+      this.nextNoteIdx = this.findNoteIndexAt(this.playbackStartSec);
+    } else {
+      this.currentBpm = val;
+      this.playbackRate = this.baseBpm > 0 ? (this.currentBpm / this.baseBpm) : 1.0;
+    }
+
+    if (this.onBpmChange) {
+      this.onBpmChange(this.currentBpm, this.baseBpm, this.playbackRate);
+    }
+  }
+
+  resetBpm() {
+    this.setBpm(this.baseBpm);
   }
 
   parseMidi(data) {
-    if (data.length < 14) return [];
+    if (data.length < 14) return { notes: [], baseBpm: 120 };
     // MThd check
     if (data[0] !== 0x4D || data[1] !== 0x54 || data[2] !== 0x68 || data[3] !== 0x64) {
-      return [];
+      return { notes: [], baseBpm: 120 };
     }
 
-    const format = (data[8] << 8) | data[9];
-    const ntracks = (data[10] << 8) | data[11];
     const division = (data[12] << 8) | data[13];
     const ppqn = division & 0x7FFF;
 
@@ -105,27 +169,18 @@ class WebMidiPlayer {
         const cmd = st >> 4;
         const ch = st & 0x0F;
 
-        if (cmd === 0x9 || cmd === 0x8) { // Note on / off
+        if (cmd === 0x9 || cmd === 0x8) {
           const note = data[tp++];
           let vel = data[tp++];
           if (cmd === 0x8) vel = 0;
           allEvents.push({ tick, type: vel > 0 ? 'noteOn' : 'noteOff', ch, note, vel });
-        } else if (cmd === 0xB) { // Controller
-          const cc = data[tp++];
-          const val = data[tp++];
-          allEvents.push({ tick, type: 'controller', ch, cc, val });
-        } else if (cmd === 0xC) { // Program Change
-          const prog = data[tp++];
-          allEvents.push({ tick, type: 'program', ch, prog });
-        } else if (cmd === 0xE) { // Pitch Bend
-          const lsb = data[tp++];
-          const msb = data[tp++];
-          allEvents.push({ tick, type: 'pitch', ch, val: ((msb << 7) | lsb) - 8192 });
+        } else if (cmd === 0xB || cmd === 0xE) {
+          tp += 2;
+        } else if (cmd === 0xC || cmd === 0xD) {
+          tp += 1;
         } else if (cmd === 0xA) {
           tp += 2;
-        } else if (cmd === 0xD) {
-          tp += 1;
-        } else if (st === 0xFF) { // Meta event
+        } else if (st === 0xFF) {
           const mtype = data[tp++];
           let mlen = 0;
           while (tp < tend) {
@@ -158,6 +213,7 @@ class WebMidiPlayer {
     let currentTick = 0;
     let currentTimeSec = 0;
     let currentUsPerQ = 500000; // default 120 bpm
+    let firstTempoUsPerQ = null;
 
     for (const ev of allEvents) {
       const dTick = ev.tick - currentTick;
@@ -168,103 +224,226 @@ class WebMidiPlayer {
       ev.timeSec = currentTimeSec;
       if (ev.type === 'tempo') {
         currentUsPerQ = ev.usPerQ;
+        if (firstTempoUsPerQ === null && ev.usPerQ > 0) {
+          firstTempoUsPerQ = ev.usPerQ;
+        }
       }
     }
 
-    return allEvents;
+    // Pair noteOn and noteOff to create discrete notes with duration
+    const notes = [];
+    const activeMap = new Map();
+
+    for (const ev of allEvents) {
+      const key = `${ev.ch}_${ev.note}`;
+      if (ev.type === 'noteOn') {
+        if (activeMap.has(key)) {
+          const prev = activeMap.get(key);
+          notes.push({
+            startSec: prev.startSec,
+            durSec: Math.max(0.04, ev.timeSec - prev.startSec),
+            ch: prev.ch,
+            note: prev.note,
+            vel: prev.vel
+          });
+        }
+        activeMap.set(key, { startSec: ev.timeSec, ch: ev.ch, note: ev.note, vel: ev.vel });
+      } else if (ev.type === 'noteOff') {
+        if (activeMap.has(key)) {
+          const prev = activeMap.get(key);
+          activeMap.delete(key);
+          notes.push({
+            startSec: prev.startSec,
+            durSec: Math.max(0.04, ev.timeSec - prev.startSec),
+            ch: prev.ch,
+            note: prev.note,
+            vel: prev.vel
+          });
+        }
+      }
+    }
+
+    // Close any unended notes
+    for (const prev of activeMap.values()) {
+      notes.push({
+        startSec: prev.startSec,
+        durSec: 0.3,
+        ch: prev.ch,
+        note: prev.note,
+        vel: prev.vel
+      });
+    }
+
+    notes.sort((a, b) => a.startSec - b.startSec);
+    const baseBpm = firstTempoUsPerQ ? Math.round(60000000 / firstTempoUsPerQ) : 120;
+    return { notes, baseBpm };
+  }
+
+  findNoteIndexAt(timeSec) {
+    let low = 0;
+    let high = this.notes.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (this.notes[mid].startSec < timeSec) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    return low;
   }
 
   play() {
     this.initAudio();
-    if (this.events.length === 0) return;
+    if (this.notes.length === 0) return;
 
-    this.isPlaying = true;
-    const startAudioTime = this.audioCtx.currentTime;
-    const startSeek = this.currentTimeSec;
-
-    // Schedule all remaining events
-    const activeNoteOscs = {};
-
-    for (const ev of this.events) {
-      if (ev.timeSec < startSeek) continue;
-      const scheduledTime = startAudioTime + (ev.timeSec - startSeek);
-
-      if (ev.type === 'noteOn') {
-        const freq = 440 * Math.pow(2, (ev.note - 69) / 12);
-        const osc = this.audioCtx.createOscillator();
-        const gain = this.audioCtx.createGain();
-
-        // Distinct timbre for melodic vs drum channel (ch 9)
-        if (ev.ch === 9) {
-          osc.type = 'triangle';
-        } else {
-          // Retro game synth wave: pulse/saw/square
-          osc.type = (ev.ch % 2 === 0) ? 'sawtooth' : 'square';
-        }
-
-        osc.frequency.setValueAtTime(freq, scheduledTime);
-
-        // Volume envelope
-        const vol = (ev.vel / 127) * 0.2;
-        gain.gain.setValueAtTime(0.0001, scheduledTime);
-        gain.gain.exponentialRampToValueAtTime(vol, scheduledTime + 0.015);
-
-        osc.connect(gain);
-        gain.connect(this.masterGain);
-
-        osc.start(scheduledTime);
-
-        const key = `${ev.ch}_${ev.note}`;
-        activeNoteOscs[key] = { osc, gain, vol, time: scheduledTime };
-
-      } else if (ev.type === 'noteOff') {
-        const key = `${ev.ch}_${ev.note}`;
-        if (activeNoteOscs[key]) {
-          const { osc, gain } = activeNoteOscs[key];
-          gain.gain.setValueAtTime(gain.gain.value || 0.1, scheduledTime);
-          gain.gain.exponentialRampToValueAtTime(0.0001, scheduledTime + 0.08);
-          osc.stop(scheduledTime + 0.1);
-          delete activeNoteOscs[key];
-        }
-      }
+    if (this.currentTimeSec >= this.durationSec) {
+      this.currentTimeSec = 0;
     }
 
-    // Timer for UI progress updates
-    const updateTick = () => {
-      if (!this.isPlaying) return;
-      this.currentTimeSec = startSeek + (this.audioCtx.currentTime - startAudioTime);
+    this.isPlaying = true;
+    this.audioStartTime = this.audioCtx.currentTime;
+    this.playbackStartSec = this.currentTimeSec;
+    this.nextNoteIdx = this.findNoteIndexAt(this.playbackStartSec);
+
+    // Lookahead scheduler
+    const lookaheadSec = 0.20; // 200ms ahead
+    const scheduleIntervalMs = 25;
+
+    if (this.schedulerTimer) {
+      clearInterval(this.schedulerTimer);
+    }
+
+    this.schedulerTimer = setInterval(() => {
+      if (!this.isPlaying || !this.audioCtx) return;
+
+      const elapsed = this.audioCtx.currentTime - this.audioStartTime;
+      const currentPos = this.playbackStartSec + (elapsed * this.playbackRate);
+      this.currentTimeSec = Math.min(currentPos, this.durationSec);
+
+      const windowSongEnd = currentPos + (lookaheadSec * this.playbackRate);
+
+      // Schedule notes inside window
+      while (this.nextNoteIdx < this.notes.length) {
+        const note = this.notes[this.nextNoteIdx];
+        if (note.startSec > windowSongEnd) {
+          break;
+        }
+
+        if (note.startSec + note.durSec >= currentPos) {
+          const noteAudioStart = this.audioStartTime + ((note.startSec - this.playbackStartSec) / this.playbackRate);
+          this.scheduleVoice(note, noteAudioStart);
+        }
+        this.nextNoteIdx++;
+      }
+
       if (this.onProgress) {
         this.onProgress(this.currentTimeSec, this.durationSec);
       }
+
       if (this.currentTimeSec >= this.durationSec) {
         this.stop();
         if (this.onEnd) this.onEnd();
-        return;
       }
-      this.timerId = requestAnimationFrame(updateTick);
+    }, scheduleIntervalMs);
+  }
+
+  scheduleVoice(note, noteAudioStart) {
+    if (!this.audioCtx) return;
+
+    const dur = Math.max(0.04, note.durSec / this.playbackRate);
+    const endAudioTime = noteAudioStart + dur;
+    const now = this.audioCtx.currentTime;
+
+    if (endAudioTime <= now) return;
+
+    const startAudioTime = Math.max(now, noteAudioStart);
+    const remainingDur = endAudioTime - startAudioTime;
+    if (remainingDur < 0.015) return;
+
+    // Freq from MIDI pitch
+    const freq = 440 * Math.pow(2, (note.note - 69) / 12);
+    if (!isFinite(freq) || freq <= 0 || freq > 20000) return;
+
+    const osc = this.audioCtx.createOscillator();
+    const gain = this.audioCtx.createGain();
+
+    // Timbre
+    if (note.ch === 9) {
+      // Drums / percussion: triangle or low pulse
+      osc.type = 'triangle';
+    } else if (note.note < 48) {
+      // Bass line
+      osc.type = 'sawtooth';
+    } else {
+      // Melodic voices: alternating square and sawtooth
+      osc.type = (note.ch % 2 === 0) ? 'sawtooth' : 'square';
+    }
+
+    osc.frequency.setValueAtTime(freq, startAudioTime);
+
+    // Smooth linear envelope (avoids exponential ramp errors with zero values)
+    const vol = (note.vel / 127) * 0.16;
+    const attack = Math.min(0.008, remainingDur * 0.2);
+    const release = Math.min(0.05, remainingDur * 0.4);
+
+    if (startAudioTime > noteAudioStart + 0.01) {
+      gain.gain.setValueAtTime(vol, startAudioTime);
+    } else {
+      gain.gain.setValueAtTime(0.0001, startAudioTime);
+      gain.gain.linearRampToValueAtTime(vol, startAudioTime + attack);
+    }
+    gain.gain.setValueAtTime(vol, Math.max(startAudioTime + attack, endAudioTime - release));
+    gain.gain.linearRampToValueAtTime(0.0001, endAudioTime);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+
+    osc.start(startAudioTime);
+    osc.stop(endAudioTime);
+
+    const voice = { osc, gain };
+    this.activeVoices.add(voice);
+
+    osc.onended = () => {
+      this.activeVoices.delete(voice);
+      try {
+        osc.disconnect();
+        gain.disconnect();
+      } catch (e) {}
     };
-    this.timerId = requestAnimationFrame(updateTick);
+  }
+
+  pause() {
+    this.isPlaying = false;
+    if (this.schedulerTimer) {
+      clearInterval(this.schedulerTimer);
+      this.schedulerTimer = null;
+    }
+    // Stop and cleanup active voices
+    for (const voice of this.activeVoices) {
+      try {
+        voice.osc.stop();
+        voice.osc.disconnect();
+        voice.gain.disconnect();
+      } catch (e) {}
+    }
+    this.activeVoices.clear();
   }
 
   stop() {
-    this.isPlaying = false;
-    if (this.timerId) {
-      cancelAnimationFrame(this.timerId);
-      this.timerId = null;
-    }
-    if (this.audioCtx) {
-      this.audioCtx.close().catch(() => {});
-      this.audioCtx = null;
-      this.masterGain = null;
-      this.analyser = null;
-    }
+    this.pause();
     this.currentTimeSec = 0;
+    this.playbackStartSec = 0;
+    this.nextNoteIdx = 0;
   }
 
   seek(seconds) {
     const wasPlaying = this.isPlaying;
-    this.stop();
+    this.pause();
     this.currentTimeSec = Math.max(0, Math.min(seconds, this.durationSec));
+    this.playbackStartSec = this.currentTimeSec;
+    this.nextNoteIdx = this.findNoteIndexAt(this.playbackStartSec);
     if (wasPlaying) {
       this.play();
     }

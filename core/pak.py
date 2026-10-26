@@ -64,6 +64,11 @@ def read_pak(pak_path: str) -> Dict[str, PakEntry]:
     return entries
 
 
+COMMON_ALIASES = {
+    'KNIGHTSNW.WSA': 'KNGHTSNW.WSA',
+    'KNIGHTZAN.WSA': 'KNGHTZAN.WSA',
+}
+
 class GameRepository:
     """Manages all PAK files and provides quick asset lookups."""
     def __init__(self, game_dir: str):
@@ -92,14 +97,22 @@ class GameRepository:
     def get_entry(self, pak_name: str, file_name: str) -> Optional[PakEntry]:
         pak_dict = self.paks.get(pak_name.upper())
         if pak_dict:
-            return pak_dict.get(file_name.upper())
+            target = file_name.upper()
+            if target in pak_dict:
+                return pak_dict[target]
+            alias = COMMON_ALIASES.get(target)
+            if alias and alias in pak_dict:
+                return pak_dict[alias]
         return None
 
     def find_entry(self, file_name: str) -> Optional[PakEntry]:
         target = file_name.upper()
+        alias = COMMON_ALIASES.get(target, target)
         for pak_name, entries in self.paks.items():
             if target in entries:
                 return entries[target]
+            if alias in entries:
+                return entries[alias]
         return None
 
     def get_entries_by_ext(self, ext: str) -> List[PakEntry]:

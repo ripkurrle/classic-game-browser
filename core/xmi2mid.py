@@ -65,7 +65,7 @@ def convert_evnt_to_midi(evnt_data: bytes, ppqn: int = 60, title: str = "") -> b
 
     while pos < l:
         delta, pos = parse_xmi_delta(evnt_data, pos)
-        current_time += delta * 3  # Scale delta to match PPQN
+        current_time += delta  # Exact XMIDI ticks at PPQN=60 (120 Hz)
 
         if pos >= l:
             break
@@ -87,9 +87,9 @@ def convert_evnt_to_midi(evnt_data: bytes, ppqn: int = 60, title: str = "") -> b
             events.append((current_time, order, bytes([status, note, vel])))
             order += 1
 
-            # Corresponding Note Off event scheduled at current_time + dur * 3
+            # Corresponding Note Off event scheduled at current_time + dur
             off_status = 0x80 | (status & 0x0F)
-            events.append((current_time + dur * 3, order, bytes([off_status, note, 0])))
+            events.append((current_time + dur, order, bytes([off_status, note, 0])))
             order += 1
 
         elif cmd in (0x8, 0xA, 0xB, 0xE):  # 2 data bytes (Note Off, Poly Aftertouch, Control Change, Pitch Bend)
@@ -122,9 +122,6 @@ def convert_evnt_to_midi(evnt_data: bytes, ppqn: int = 60, title: str = "") -> b
             pos += meta_len
 
             if meta_type == 0x51 and len(meta_payload) == 3:  # Set Tempo
-                raw_tempo = (meta_payload[0] << 16) | (meta_payload[1] << 8) | meta_payload[2]
-                scaled_tempo = raw_tempo * 3
-                meta_payload = struct.pack('>I', scaled_tempo)[1:]  # 3 bytes
                 tempo_set = True
 
             events.append((current_time, order, bytes([0xFF, meta_type]) + put_vlq(len(meta_payload)) + meta_payload))
@@ -139,6 +136,10 @@ def convert_evnt_to_midi(evnt_data: bytes, ppqn: int = 60, title: str = "") -> b
             pos += sysex_len
             events.append((current_time, order, bytes([status]) + put_vlq(sysex_len) + sysex_payload))
             order += 1
+
+    if not tempo_set:
+        # Default 120 BPM (500,000 us/qn)
+        events.append((0, 0, bytes([0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20])))
 
     # Sort events by tick time, preserving original order for simultaneous events
     events.sort(key=lambda ev: (ev[0], ev[1]))
@@ -264,8 +265,13 @@ def get_midi_metadata(mid_bytes: bytes) -> Dict[str, Any]:
                         programs.add(mid_bytes[tp])
                     tp += 1
                 elif st == 0xFF:
+                    mtype = mid_bytes[tp]
                     tp += 1
                     mlen, tp = parse_vlq(mid_bytes, tp)
+                    if mtype == 0x51 and mlen == 3 and tp + 3 <= tend:
+                        us_per_q = (mid_bytes[tp] << 16) | (mid_bytes[tp + 1] << 8) | mid_bytes[tp + 2]
+                        if us_per_q > 0:
+                            tempo_bpm = round(60000000.0 / us_per_q)
                     tp += mlen
                 elif st in (0xF0, 0xF7):
                     slen, tp = parse_vlq(mid_bytes, tp)
@@ -273,7 +279,7 @@ def get_midi_metadata(mid_bytes: bytes) -> Dict[str, Any]:
             duration_ticks = max(duration_ticks, tick)
         pos += sz
 
-    tempo_bpm = 120  # default
+    tempo_bpm = locals().get('tempo_bpm', 120)
     duration_seconds = (duration_ticks / max(ppqn, 1)) * (60.0 / tempo_bpm)
 
     return {
@@ -283,6 +289,7 @@ def get_midi_metadata(mid_bytes: bytes) -> Dict[str, Any]:
         'channels_used': sorted(list(channels)),
         'instruments_used': sorted(list(programs)),
         'ppqn': ppqn,
+        'tempo_bpm': tempo_bpm,
         'duration_ticks': duration_ticks,
         'estimated_seconds': round(duration_seconds, 1),
     }

@@ -17,12 +17,12 @@ FILE_TYPE_CATALOG: Dict[str, Dict[str, Any]] = {
         'viewer_mode': 'image',
     },
     '.CMP': {
-        'name': 'Compressed Cutscene Scene Background (SCENE2/3.CMP)',
-        'category': 'graphics',
-        'icon': '🎬',
-        'tech_specs': 'Format 80 (LCW) compressed, 320x200/204 8-bit VGA (65,532 bytes buffer), uses INTROGEN.COL',
-        'description': 'Full-screen cinematic intro story and prologue background graphics (SCENE2.CMP and SCENE3.CMP in INTROGEN.PAK) compressed using Westwood Format 80 identical to .CPS.',
-        'viewer_mode': 'image',
+        'name': 'Cutscene Transition Color Table (SCENE2/3.CMP)',
+        'category': 'system',
+        'icon': '🔀',
+        'tech_specs': 'Format 80 (LCW) compressed 256×256 cross-fade transition table (65,532 B)',
+        'description': 'Precomputed 64 KB color blending lookup table used by Westwood\'s cutscene engine (nestedFrameFadeTransition in INTROGEN.PAK) for real-time 3-step VGA cross-dissolves between scenes. Evaluates cmp[(src_color << 8) + dst_color] to smoothly blend pixel values. Not a background image.',
+        'viewer_mode': 'transition_table',
     },
     '.SHP': {
         'name': 'Shape Archive / Character & Item Sprites',

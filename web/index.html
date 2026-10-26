@@ -46,6 +46,17 @@
       </div>
 
       <div class="header-actions">
+        <button id="quickJumpsBtn" class="btn btn-secondary" title="Quick jump to iconic scenes and assets">
+          <span>🌟 Featured Scenes</span>
+        </button>
+        <button id="helpModalBtn" class="btn btn-secondary" title="User guide, keyboard shortcuts and file formats (Press ?)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+          <span>Help & Guide</span>
+        </button>
         <button id="batchExportBtn" class="btn btn-primary glow-btn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -126,6 +137,11 @@
             <option value="">All Archives (.PAK)</option>
           </select>
         </div>
+
+        <label class="filter-checkbox-label" title="Hide non-useful files (TIM, SHP, MSC, ADV, DRV, CMP, DAT, C55, ADL, EMC stubs referencing SHP/WSA, and Sysex files)">
+          <input type="checkbox" id="hideNonUsefulCheck" checked>
+          <span class="checkbox-text">Hide non-useful files</span>
+        </label>
       </div>
     </nav>
 
@@ -161,17 +177,9 @@
               </button>
             </div>
           </div>
-          <div class="sort-select-wrapper">
-            <select id="assetSortSelect" class="sort-select" title="Sort order">
-              <option value="name_asc">Name (A → Z)</option>
-              <option value="name_desc">Name (Z → A)</option>
-              <option value="size_desc">Size (Largest first)</option>
-              <option value="size_asc">Size (Smallest first)</option>
-            </select>
-          </div>
         </div>
 
-        <div class="asset-list-container" id="assetList">
+        <div class="asset-list-container grid-mode" id="assetList">
           <div class="loading-state">
             <div class="spinner"></div>
             <span>Loading assets...</span>
@@ -210,26 +218,6 @@
           </div>
         </div>
 
-        <!-- Dedicated Pan & Edge Sliders Bar (visible when expanded picture overflows preview viewport) -->
-        <div class="pan-sliders-bar" id="panSlidersBar" style="display: none;">
-          <div class="pan-sliders-inner">
-            <div class="pan-slider-group" id="panXGroup">
-              <span class="pan-label">↔ Horizontal:</span>
-              <button class="pan-edge-btn" id="panLeftBtn" title="Jump to Left Edge">⇤ Left</button>
-              <input type="range" class="pan-range" id="panXSlider" min="0" max="100" value="50" title="Slide horizontally">
-              <button class="pan-edge-btn" id="panRightBtn" title="Jump to Right Edge">Right ⇥</button>
-            </div>
-
-            <div class="pan-slider-group" id="panYGroup">
-              <span class="pan-label">↕ Vertical:</span>
-              <button class="pan-edge-btn" id="panTopBtn" title="Jump to Top Edge">⇡ Top</button>
-              <input type="range" class="pan-range" id="panYSlider" min="0" max="100" value="50" title="Slide vertically">
-              <button class="pan-edge-btn" id="panBottomBtn" title="Jump to Bottom Edge">Bottom ⇣</button>
-            </div>
-
-            <button class="pan-edge-btn pan-center-btn" id="panCenterBtn" title="Center View">⊙ Center</button>
-          </div>
-        </div>
 
         <!-- Viewer Meta & Controls Drawer -->
         <div class="viewer-meta-drawer" id="viewerMetaDrawer">
@@ -371,6 +359,258 @@
       </div>
     </div>
   </div>
+
+  <!-- Help & User Guide Modal -->
+  <div class="modal-overlay" id="helpModal" style="display: none;">
+    <div class="modal-dialog modal-dialog-lg">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <div class="modal-icon">📖</div>
+          <div>
+            <h3>Kyrandia 2 Asset Studio — User Guide</h3>
+            <p>How to explore, inspect, compose, and extract Westwood game assets</p>
+          </div>
+        </div>
+        <button class="modal-close" id="closeHelpModalBtn">&times;</button>
+      </div>
+
+      <!-- Help Navigation Tabs -->
+      <div class="help-tabs-nav">
+        <button class="help-tab-btn active" data-tab="guide">🚀 Quick Start</button>
+        <button class="help-tab-btn" data-tab="compositor">🎬 Scenes & Layers</button>
+        <button class="help-tab-btn" data-tab="fonts">🔤 Font Sandbox</button>
+        <button class="help-tab-btn" data-tab="audio">🎵 Audio & Synth</button>
+        <button class="help-tab-btn" data-tab="formats">📋 27 File Formats</button>
+        <button class="help-tab-btn" data-tab="shortcuts">⌨️ Shortcuts</button>
+        <button class="help-tab-btn" data-tab="attributions">📜 Attributions</button>
+      </div>
+
+      <div class="modal-body help-modal-body">
+        <!-- Tab 1: Quick Start -->
+        <div class="help-tab-pane active" id="pane-guide">
+          <h4>Welcome to the Kyrandia 2 Asset Studio!</h4>
+          <p>This desktop application lets you explore, inspect, and export every original artwork, animation, sprite, soundtrack, and script from Westwood Studios' 1993 classic point-and-click adventure.</p>
+
+          <div class="help-grid">
+            <div class="help-card">
+              <div class="help-card-icon">1️⃣</div>
+              <h5>Browse & Filter</h5>
+              <p>Use the top category tabs (<strong>Backgrounds</strong>, <strong>Models</strong>, <strong>Animations</strong>, <strong>Soundtracks</strong>, <strong>SFX</strong>, <strong>Palettes</strong>, <strong>Scripts</strong>) or select a specific archive (e.g. <code>INHOME.PAK</code>) in the archive dropdown.</p>
+            </div>
+            <div class="help-card">
+              <div class="help-card-icon">2️⃣</div>
+              <h5>Interactive Preview</h5>
+              <p>Click any asset in the sidebar or use the <strong>Up/Down arrow keys</strong>. The viewer adapts automatically: animated canvas for WSAs, interactive SoundFont synth for MIDIs, multi-line sandbox for fonts, and script search for dialogues.</p>
+            </div>
+            <div class="help-card">
+              <div class="help-card-icon">3️⃣</div>
+              <h5>One-Click Export</h5>
+              <p>Every asset viewer includes high-resolution export buttons (PNG snapshots, looping animated GIFs, Standard MIDI, WAV audio, or raw files). Use <strong>Batch Export Center</strong> in the top header to extract entire collections at once.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Compositor -->
+        <div class="help-tab-pane" id="pane-compositor">
+          <h4>Interactive Multi-Layer WSA Scene Compositing</h4>
+          <p>In Kyrandia 2, room backgrounds (<code>.CPS</code>) are brought to life with dynamic animation loops (<code>.WSA</code>). The Studio features a full scene compositor:</p>
+          <ul class="help-list">
+            <li><strong>Toggle Layers</strong>: Check or uncheck individual animation layers (e.g. hearth coals, dancing faun) in the lower tray to view scenery with or without props.</li>
+            <li><strong>Reorder Depth (Z-Order)</strong>: Click the <strong>▲ / ▼</strong> buttons on layer cards to change which character or object renders in front.</li>
+            <li><strong>Reposition Coordinates</strong>: Adjust <strong>X</strong> and <strong>Y</strong> offset numbers or click-and-drag directly on the canvas to reposition animations.</li>
+            <li><strong>Reset to Defaults</strong>: Click <strong>"Reset Layout"</strong> at any time to instantly revert all layers back to their original game-script bytecode positions.</li>
+            <li><strong>Composite Export</strong>: The <strong>"Export Scene (PNG)"</strong> and <strong>"Export Animated Scene (GIF)"</strong> buttons render the complete multi-layer composition exactly as arranged.</li>
+          </ul>
+        </div>
+
+        <!-- Tab 3: Fonts -->
+        <div class="help-tab-pane" id="pane-fonts">
+          <h4>Westwood Bitmap Font Engine (.FNT)</h4>
+          <p>Westwood's 4bpp variable-width bitmap fonts (e.g. <code>GOLDFONT.FNT</code>, <code>6.FNT</code>, <code>8FAT.FNT</code>) are powered by a live typography engine:</p>
+          <ul class="help-list">
+            <li><strong>Multi-Line Sandbox</strong>: Type custom sentences in the text box (press Enter for multiple lines).</li>
+            <li><strong>Quick Presets</strong>: Click presets like <em>Game Title</em>, <em>Dialogue</em>, or <em>All Glyphs</em> to test character sets instantly.</li>
+            <li><strong>Retro Color Schemes</strong>: Switch between <strong>🌟 Gold</strong>, <strong>⚪ White</strong>, <strong>🟠 Amber</strong>, <strong>🔷 Cyan</strong>, and <strong>🟢 Emerald</strong> palettes.</li>
+            <li><strong>Typography Controls</strong>: Adjust <strong>Zoom (1x–4x)</strong>, <strong>Tracking (letter spacing)</strong>, and <strong>Line Spacing</strong> in real time.</li>
+            <li><strong>Export Font Sheet</strong>: Generate a complete 16-column character sheet PNG for modding and graphic design.</li>
+          </ul>
+        </div>
+
+        <!-- Tab 4: Audio -->
+        <div class="help-tab-pane" id="pane-audio">
+          <h4>Soundtracks (XMIDI) & Speech/SFX (VOC)</h4>
+          <p>Audition Frank Klepacki and Paul Mudra's legendary soundtrack with an authentic SoundFont synthesis engine:</p>
+          <ul class="help-list">
+            <li><strong>Built-In Web Audio Synth</strong>: Play <code>.XMI</code> sequences directly in the browser with GM soundbanks, real-time seek bar, and master volume control.</li>
+            <li><strong>Standard MIDI (.MID) Export</strong>: One-click export converts Westwood multi-track XMIDI events into standard Type 1 MIDI files compatible with modern DAWs (Ableton, FL Studio, Logic).</li>
+            <li><strong>Creative Voice (.VOC)</strong>: Audition digitized speech dialogue and sound effects with waveform visualizer and direct 16-bit WAV audio downloads.</li>
+          </ul>
+        </div>
+
+        <!-- Tab 5: 27 File Formats -->
+        <div class="help-tab-pane" id="pane-formats">
+          <h4>Westwood File Formats Taxonomy</h4>
+          <div class="format-table-wrap">
+            <table class="format-ref-table">
+              <thead>
+                <tr>
+                  <th>Ext</th>
+                  <th>Category</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><code>.CPS</code></td><td>Graphics</td><td>Full-screen 320×200 256-color background scenery (Format 80 LCW).</td></tr>
+                <tr><td><code>.WSA</code></td><td>Graphics</td><td>Westwood sprite animation sequence with delta compression.</td></tr>
+                <tr><td><code>.SHP</code></td><td>Graphics</td><td>Compact shape model and multi-frame character sprite library.</td></tr>
+                <tr><td><code>.CSH</code></td><td>Graphics</td><td>Compressed shape archives (<code>_ITEMS.CSH</code> 180 potion/item icons).</td></tr>
+                <tr><td><code>.CMP</code></td><td>Cutscenes</td><td>256×256 cutscene cross-fade and dissolve color lookup table.</td></tr>
+                <tr><td><code>.COL</code></td><td>Palettes</td><td>256-color VGA palette (128 scene colors + character slots).</td></tr>
+                <tr><td><code>.FNT</code></td><td>Fonts</td><td>Westwood v3 4bpp proportional and fixed-width bitmap font.</td></tr>
+                <tr><td><code>.XMI</code></td><td>Audio</td><td>Miles Sound System multi-track XMIDI sequence.</td></tr>
+                <tr><td><code>.VOC</code></td><td>Audio</td><td>Creative Labs digitized speech and sound effect sample.</td></tr>
+                <tr><td><code>.EMC/.FMC/.GMC</code></td><td>Scripts</td><td>Multilingual subtitle dialogue transcript (English, French, German).</td></tr>
+                <tr><td><code>.ENG/.FRE/.GER</code></td><td>Scripts</td><td>In-game room names, item titles, and Norton's spellbook parchment text.</td></tr>
+                <tr><td><code>.MSC</code></td><td>Data</td><td>Scene collision walkbox, pathfinding, and depth layer mask.</td></tr>
+                <tr><td><code>.TIM</code></td><td>Data</td><td>Voice speech synchronization and timeline opcode sequence.</td></tr>
+                <tr><td><code>.C55/.ADL/.PCS</code></td><td>Audio Banks</td><td>Roland SCC-55 SysEx, AdLib FM patches, and PC Speaker sound banks.</td></tr>
+                <tr><td><code>.ADV/.DRV</code></td><td>Drivers</td><td>Miles Audio hardware interface drivers and real-mode device drivers.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab 6: Shortcuts -->
+        <div class="help-tab-pane" id="pane-shortcuts">
+          <h4>Keyboard Shortcuts Reference</h4>
+          <table class="shortcuts-ref-table">
+            <tbody>
+              <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>Navigate to previous / next asset in filtered list</td></tr>
+              <tr><td><kbd>Space</kbd></td><td>Play / Pause animation, 3D model rotation, or soundtrack</td></tr>
+              <tr><td><kbd>/</kbd></td><td>Focus search bar</td></tr>
+              <tr><td><kbd>Esc</kbd></td><td>Close modals or clear search filter</td></tr>
+              <tr><td><kbd>?</kbd></td><td>Open this Help & Guide modal</td></tr>
+              <tr><td><kbd>1</kbd> – <kbd>4</kbd></td><td>Set zoom scale (1x, 2x, 3x, 4x)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Tab 7: Attributions & Top-Level Sources -->
+        <div class="help-tab-pane" id="pane-attributions">
+          <h4>Attribution & Top-Level Sources</h4>
+          <p>This project is developed for historical research, educational analysis, and digital preservation. Grateful acknowledgment is made to the following original creators and reverse-engineering pioneers:</p>
+          <div class="help-grid">
+            <div class="help-card">
+              <h5>🏰 Westwood Studios (1993)</h5>
+              <p>Creators of <em>The Legend of Kyrandia: Book Two — The Hand of Fate</em>. Rick Gush (Director), Michael Legg & Philip W. Morrow (Engine), Louis Castle & Rick Parks (Art), Frank Klepacki & Paul Mudra (Soundtrack).</p>
+            </div>
+            <div class="help-card">
+              <h5>🕹️ The ScummVM Project</h5>
+              <p>The <code>engines/kyra</code> team (Torbjörn Andersson, Eugene Sandulenko, LordHoto, Florian Klämpfl) for reverse engineering Format 80 LCW, Format 40 XOR-delta, character lighting tables (<code>_scenePal</code>), and DTE text dictionaries.</p>
+            </div>
+            <div class="help-card">
+              <h5>📚 MultimediaWiki</h5>
+              <p>Mike Melanson, Kostya Shishkov, and contributors for technical specifications covering Westwood Format 80, Format 40, SHP sprites, WSA animations, CPS graphics, and COL palette ram structures.</p>
+            </div>
+            <div class="help-card">
+              <h5>🎼 Miles Sound System (MSS)</h5>
+              <p>John Miles (RAD Game Tools / Miles Design) for the XMIDI file format specification, and the MIDI Manufacturers Association for Standard MIDI File (SMF) 1.0.</p>
+            </div>
+            <div class="help-card">
+              <h5>🖼️ Pillow (PIL Fork) & Web Audio</h5>
+              <p>Alex Clark and Pillow contributors for imaging and export capabilities; W3C Audio Working Group for the Web Audio API enabling zero-dependency browser MIDI synthesis.</p>
+            </div>
+          </div>
+          <p style="margin-top: 14px; font-size: 0.85rem; color: var(--text-muted);">For complete license notices, technical links, format citations, and reverse-engineering repositories, see <code>ATTRIBUTION.md</code> and <code>SOURCES.md</code> in the repository root.</p>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="closeHelpModalFooterBtn">Got it, thanks!</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Featured Scenes Quick-Jump Modal -->
+  <div class="modal-overlay" id="featuredModal" style="display: none;">
+    <div class="modal-dialog modal-dialog-lg">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <div class="modal-icon">🌟</div>
+          <div>
+            <h3>Featured Scenes & Iconic Assets</h3>
+            <p>One-click shortcuts to the most iconic moments in The Hand of Fate</p>
+          </div>
+        </div>
+        <button class="modal-close" id="closeFeaturedModalBtn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="featured-cards-grid">
+          <div class="featured-scene-card" data-pak="INHOME.PAK" data-name="INHOME.CPS">
+            <div class="feat-badge">Scene & Anims</div>
+            <h4>🏡 Zanthia's Home</h4>
+            <p>Fireplace coals, dancing faun with glass & pendulum swing</p>
+            <div class="feat-sub">INHOME.PAK • 5 linked animations</div>
+          </div>
+
+          <div class="featured-scene-card" data-pak="BRIDGE.PAK" data-name="BRIDGE.CPS">
+            <div class="feat-badge">Scene & Anims</div>
+            <h4>❄️ The Mountain Bridge</h4>
+            <p>Icy mountain pass with the snowman encounter</p>
+            <div class="feat-sub">BRIDGE.PAK • KNGHTSNW.WSA</div>
+          </div>
+
+          <div class="featured-scene-card" data-pak="CAULDRON.PAK" data-name="CAULDRON.CPS">
+            <div class="feat-badge">Scene & Anims</div>
+            <h4>🌋 The Volcano Cauldron</h4>
+            <p>Magical bubbling cauldron brewing transformation spells</p>
+            <div class="feat-sub">CAULDRON.PAK • Animated cauldron</div>
+          </div>
+
+          <div class="featured-scene-card" data-pak="GEARS.PAK" data-name="GEARS.CPS">
+            <div class="feat-badge">Scene & Anims</div>
+            <h4>⚙️ The Wheel of Fate</h4>
+            <p>Enormous revolving center of the world machinery</p>
+            <div class="feat-sub">GEARS.PAK • Multi-PAK linked WSAs</div>
+          </div>
+
+          <div class="featured-scene-card" data-pak="INSHOP.PAK" data-name="INSHPZY.WSA">
+            <div class="feat-badge">Cutscene Animation</div>
+            <h4>🏔️ The Yeti Shop Encounter</h4>
+            <p>Zanthia disguised in the lady Yeti costume carried off by the Yeti</p>
+            <div class="feat-sub">INSHOP.PAK • 81 frames • Level 6 palette</div>
+          </div>
+
+          <div class="featured-scene-card" data-pak="INTROGEN.PAK" data-name="GOLDFONT.FNT">
+            <div class="feat-badge">Typography Sandbox</div>
+            <h4>🔤 Kyrandia Gold Title Font</h4>
+            <p>The iconic golden embossed bitmap font with live typing sandbox</p>
+            <div class="feat-sub">INTROGEN.PAK • Westwood Font Format v3</div>
+          </div>
+
+          <div class="featured-scene-card" data-pak="OTHER.PAK" data-name="_ITEMS.CSH">
+            <div class="feat-badge">Sprite Library</div>
+            <h4>🧪 Potion & Item Sprites</h4>
+            <p>All 180 potion flasks, spellbook ingredients, and quest items</p>
+            <div class="feat-sub">OTHER.PAK • Format 80 uncompressed SHP</div>
+          </div>
+
+          <div class="featured-scene-card" data-pak="AUDIO.PAK" data-name="K2TITLE.XMI">
+            <div class="feat-badge">Soundtrack</div>
+            <h4>🎵 Main Title Theme</h4>
+            <p>Frank Klepacki's memorable orchestral intro theme</p>
+            <div class="feat-sub">AUDIO.PAK • Multi-track XMIDI score</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="closeFeaturedModalFooterBtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
   <!-- Scripts -->
   <script src="midi_synth.js"></script>

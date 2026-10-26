@@ -102,7 +102,7 @@ class BatchExtractor:
             job.message = f"Export failed: {e}"
 
     def _export_backgrounds(self, job: ExtractionJob):
-        bg_entries = self.repo.get_entries_by_ext('.CPS') + self.repo.get_entries_by_ext('.CMP')
+        bg_entries = self.repo.get_entries_by_ext('.CPS')
         job.total_items = len(bg_entries)
         out_folder = os.path.join(job.dest_dir, "backgrounds")
         os.makedirs(out_folder, exist_ok=True)
@@ -189,7 +189,7 @@ class BatchExtractor:
                 pass
 
     def _export_all(self, job: ExtractionJob):
-        bg_entries = self.repo.get_entries_by_ext('.CPS') + self.repo.get_entries_by_ext('.CMP')
+        bg_entries = self.repo.get_entries_by_ext('.CPS')
         shp_entries = self.repo.get_entries_by_ext('.SHP') + self.repo.get_entries_by_ext('.CSH')
         xmi_entries = self.repo.get_entries_by_ext('.XMI')
         voc_entries = self.repo.get_entries_by_ext('.VOC')

@@ -11,6 +11,7 @@
     currentCategory: 'all',
     currentPak: '',
     searchQuery: '',
+    hideNonUseful: true,
     viewMode: 'grid', // 'grid' | 'list'
     assets: [],
     selectedAsset: null,
@@ -24,11 +25,22 @@
     modelPlaying: false,
     modelTimer: null,
     modelFps: 8,
+    modelZoomLevel: 'fit',
 
     animCurrentFrame: 0,
     animPlaying: false,
     animTimer: null,
     animFps: 10,
+    animZoomLevel: 'fit',
+    animBackdrop: 'bg-checker',
+    animSceneMode: 'crop',
+    animWithBg: false,
+    cropBottomPanel: false,
+    cpsWithAnims: false,
+    cpsAnimTimer: null,
+    cpsSelectedAnims: new Set(),
+
+    reapplyZoom: null,
 
     audioVisualizerTimer: null,
     batchPollTimer: null,
@@ -46,11 +58,15 @@
     paletteSwatchSize: 'size-md',
   };
 
-  // Restore saved sort preferences from localStorage
+  // Restore saved sort preferences and view mode from localStorage
   try {
     const savedSort = localStorage.getItem('kyrandia_sort_prefs');
     if (savedSort) {
       Object.assign(state.sortPreferences, JSON.parse(savedSort));
+    }
+    const savedViewMode = localStorage.getItem('kyrandia_view_mode');
+    if (savedViewMode === 'grid' || savedViewMode === 'list') {
+      state.viewMode = savedViewMode;
     }
   } catch (_) {}
 
@@ -73,7 +89,6 @@
     sortBySizeBtn: document.getElementById('sortBySizeBtn'),
     sortNameArrow: document.getElementById('sortNameArrow'),
     sortSizeArrow: document.getElementById('sortSizeArrow'),
-    assetSortSelect: document.getElementById('assetSortSelect'),
 
     // Viewer
     viewerStage: document.getElementById('viewerStage'),
@@ -84,15 +99,6 @@
     metaChips: document.getElementById('metaChips'),
     interactiveControls: document.getElementById('interactiveControls'),
 
-    // Edge Pan Sliders
-    panSlidersBar: document.getElementById('panSlidersBar'),
-    panXSlider: document.getElementById('panXSlider'),
-    panYSlider: document.getElementById('panYSlider'),
-    panLeftBtn: document.getElementById('panLeftBtn'),
-    panRightBtn: document.getElementById('panRightBtn'),
-    panTopBtn: document.getElementById('panTopBtn'),
-    panBottomBtn: document.getElementById('panBottomBtn'),
-    panCenterBtn: document.getElementById('panCenterBtn'),
 
     // Counts
     countAll: document.getElementById('countAll'),
@@ -105,6 +111,7 @@
     countScripts: document.getElementById('countScripts'),
     langFilterWrapper: document.getElementById('langFilterWrapper'),
     langSelect: document.getElementById('langSelect'),
+    hideNonUsefulCheck: document.getElementById('hideNonUsefulCheck'),
 
     // Batch Export Modal
     batchExportBtn: document.getElementById('batchExportBtn'),
@@ -125,10 +132,26 @@
     saveDirBtn: document.getElementById('saveDirBtn'),
     dirInput: document.getElementById('dirInput'),
     dirStatusMsg: document.getElementById('dirStatusMsg'),
+
+    // Help & Guide Modal
+    helpModalBtn: document.getElementById('helpModalBtn'),
+    helpModal: document.getElementById('helpModal'),
+    closeHelpModalBtn: document.getElementById('closeHelpModalBtn'),
+    closeHelpModalFooterBtn: document.getElementById('closeHelpModalFooterBtn'),
+
+    // Featured Scenes Modal
+    quickJumpsBtn: document.getElementById('quickJumpsBtn'),
+    featuredModal: document.getElementById('featuredModal'),
+    closeFeaturedModalBtn: document.getElementById('closeFeaturedModalBtn'),
+    closeFeaturedModalFooterBtn: document.getElementById('closeFeaturedModalFooterBtn'),
+
+    // Toast Container
+    toastContainer: document.getElementById('toastContainer'),
   };
 
   // Initialization
   async function init() {
+    updateViewModeUI();
     updateSortControlsUI();
     setupEventListeners();
     await loadStatus();
@@ -182,13 +205,6 @@
       }
     });
 
-    el.assetSortSelect.addEventListener('change', (e) => {
-      const parts = e.target.value.split('_');
-      if (parts.length === 2) {
-        setSort(parts[0], parts[1]);
-      }
-    });
-
     // Search Input
     let searchTimeout = null;
     el.searchInput.addEventListener('input', (e) => {
@@ -214,19 +230,27 @@
       loadAssets();
     });
 
+    // Hide Non-Useful Files Checkbox
+    if (el.hideNonUsefulCheck) {
+      el.hideNonUsefulCheck.checked = state.hideNonUseful;
+      el.hideNonUsefulCheck.addEventListener('change', (e) => {
+        state.hideNonUseful = e.target.checked;
+        loadStatus();
+        loadAssets();
+      });
+    }
+
     // View Toggles
     el.viewGridBtn.addEventListener('click', () => {
       state.viewMode = 'grid';
-      el.viewGridBtn.classList.add('active');
-      el.viewListBtn.classList.remove('active');
-      el.assetList.classList.add('grid-mode');
+      updateViewModeUI();
+      try { localStorage.setItem('kyrandia_view_mode', 'grid'); } catch (_) {}
     });
 
     el.viewListBtn.addEventListener('click', () => {
       state.viewMode = 'list';
-      el.viewListBtn.classList.add('active');
-      el.viewGridBtn.classList.remove('active');
-      el.assetList.classList.remove('grid-mode');
+      updateViewModeUI();
+      try { localStorage.setItem('kyrandia_view_mode', 'list'); } catch (_) {}
     });
 
     // Modals
@@ -247,15 +271,80 @@
     el.cancelDirModalBtn.addEventListener('click', () => el.dirModal.style.display = 'none');
     el.saveDirBtn.addEventListener('click', saveDirectory);
 
-    // Pan Sliders & Drag to Pan
-    setupPanSliders();
+    // Help & Guide Modal
+    if (el.helpModalBtn && el.helpModal) {
+      el.helpModalBtn.addEventListener('click', () => {
+        el.helpModal.style.display = 'flex';
+      });
+      if (el.closeHelpModalBtn) {
+        el.closeHelpModalBtn.addEventListener('click', () => el.helpModal.style.display = 'none');
+      }
+      if (el.closeHelpModalFooterBtn) {
+        el.closeHelpModalFooterBtn.addEventListener('click', () => el.helpModal.style.display = 'none');
+      }
+
+      // Help Tabs Navigation
+      document.querySelectorAll('.help-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.help-tab-btn').forEach(b => b.classList.remove('active'));
+          document.querySelectorAll('.help-tab-pane').forEach(p => p.classList.remove('active'));
+          btn.classList.add('active');
+          const pane = document.getElementById(`pane-${btn.dataset.tab}`);
+          if (pane) pane.classList.add('active');
+        });
+      });
+    }
+
+    // Featured Scenes Modal
+    if (el.quickJumpsBtn && el.featuredModal) {
+      el.quickJumpsBtn.addEventListener('click', () => {
+        el.featuredModal.style.display = 'flex';
+      });
+      if (el.closeFeaturedModalBtn) {
+        el.closeFeaturedModalBtn.addEventListener('click', () => el.featuredModal.style.display = 'none');
+      }
+      if (el.closeFeaturedModalFooterBtn) {
+        el.closeFeaturedModalFooterBtn.addEventListener('click', () => el.featuredModal.style.display = 'none');
+      }
+
+      // Featured Scene Card Clicks
+      document.querySelectorAll('.featured-scene-card').forEach(card => {
+        card.addEventListener('click', async () => {
+          const pak = card.dataset.pak;
+          const name = card.dataset.name;
+          el.featuredModal.style.display = 'none';
+
+          if (el.pakSelect) el.pakSelect.value = pak;
+          state.currentPak = pak;
+          state.currentCategory = 'all';
+          document.querySelectorAll('.cat-tab').forEach(t => t.classList.toggle('active', t.dataset.category === 'all'));
+
+          await loadAssets();
+          const target = state.assets.find(a => a.name.toUpperCase() === name.toUpperCase() && a.pak_name.toUpperCase() === pak.toUpperCase());
+          if (target) {
+            selectAsset(target);
+            scrollActiveCardIntoView();
+            showToast(`Loaded ${name} from ${pak}`, 'success');
+          }
+        });
+      });
+    }
+
+    // Global Keyboard Shortcuts
+    document.addEventListener('keydown', handleGlobalKeydown);
+
+    // Viewport Navigation & Drag to Pan
+    setupViewportNavigation();
     setupDragToPan();
   }
 
   // API Calls
   async function loadStatus() {
     try {
-      const res = await fetch('/api/status');
+      const params = new URLSearchParams({
+        hide_non_useful: state.hideNonUseful ? '1' : '0',
+      });
+      const res = await fetch(`/api/status?${params}`);
       const data = await res.json();
       state.gameDir = data.game_dir;
       el.headerGameDir.textContent = data.game_dir;
@@ -334,10 +423,6 @@
         : 'Sort by File Size (Largest first)';
     }
 
-    if (el.assetSortSelect) {
-      el.assetSortSelect.value = `${by}_${order}`;
-    }
-
     if (el.assetListHeading) {
       const titles = {
         all: 'All Assets',
@@ -356,17 +441,32 @@
     }
   }
 
+  function updateViewModeUI() {
+    if (state.viewMode === 'list') {
+      if (el.viewListBtn) el.viewListBtn.classList.add('active');
+      if (el.viewGridBtn) el.viewGridBtn.classList.remove('active');
+      if (el.assetList) el.assetList.classList.remove('grid-mode');
+    } else {
+      state.viewMode = 'grid';
+      if (el.viewGridBtn) el.viewGridBtn.classList.add('active');
+      if (el.viewListBtn) el.viewListBtn.classList.remove('active');
+      if (el.assetList) el.assetList.classList.add('grid-mode');
+    }
+  }
+
   function sortAndRenderAssets() {
     const { by, order } = getCurrentSort();
     state.assets.sort((a, b) => {
+      const sizeA = (a.ext === '.CMP' && a.uncompressed_size) ? a.uncompressed_size : a.size;
+      const sizeB = (b.ext === '.CMP' && b.uncompressed_size) ? b.uncompressed_size : b.size;
       if (by === 'size') {
-        const diff = a.size - b.size;
+        const diff = sizeA - sizeB;
         if (diff !== 0) return order === 'desc' ? -diff : diff;
         return a.name.localeCompare(b.name);
       } else {
         const cmp = a.name.localeCompare(b.name);
         if (cmp !== 0) return order === 'desc' ? -cmp : cmp;
-        return a.size - b.size;
+        return sizeA - sizeB;
       }
     });
     renderAssetList();
@@ -388,6 +488,7 @@
         q: state.searchQuery,
         sort: by,
         order: order,
+        hide_non_useful: state.hideNonUseful ? '1' : '0',
       });
 
       const res = await fetch(`/api/assets?${params}`);
@@ -436,8 +537,10 @@
       const extClass = `ext-${asset.ext.replace('.', '').toLowerCase()}`;
       let thumbHtml = '';
 
-      if (asset.ext === '.CPS' || asset.ext === '.CMP') {
+      if (asset.ext === '.CPS') {
         thumbHtml = `<img src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}" class="asset-thumbnail" loading="lazy" alt="${asset.name}">`;
+      } else if (asset.ext === '.CMP') {
+        thumbHtml = `<span class="asset-placeholder-icon">🔀</span>`;
       } else if (asset.ext === '.SHP' || asset.ext === '.CSH') {
         thumbHtml = `<img src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=0" class="asset-thumbnail" loading="lazy" alt="${asset.name}">`;
       } else if (asset.ext === '.WSA') {
@@ -463,7 +566,7 @@
       } else if (asset.ext === '.DRV') {
         thumbHtml = `<span class="asset-placeholder-icon">🔌</span>`;
       } else if (asset.ext === '.FNT') {
-        thumbHtml = `<span class="asset-placeholder-icon">🔤</span>`;
+        thumbHtml = `<img src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}" class="asset-thumbnail" loading="lazy" alt="${asset.name}">`;
       } else if (asset.ext === '.DAT') {
         thumbHtml = `<span class="asset-placeholder-icon">📊</span>`;
       } else if (['.EMC', '.FMC', '.GMC', '.DLE', '.DLF', '.DLG', '.ENG', '.FRE', '.GER'].includes(asset.ext)) {
@@ -473,13 +576,21 @@
         thumbHtml = `<span class="asset-placeholder-icon">${asset.type_icon || '📄'}</span>`;
       }
 
+      let sizeBadgeContent = formatBytes(asset.size);
+      let sizeBadgeTitle = `Size: ${formatBytes(asset.size)}`;
+      if (asset.ext === '.CMP') {
+        const uncomp = asset.uncompressed_size || 65532;
+        sizeBadgeContent = `${formatBytes(uncomp)} <span class="uncompressed-tag">Uncompressed</span>`;
+        sizeBadgeTitle = `Uncompressed value shown: ${formatBytes(uncomp)} (Compressed in PAK: ${formatBytes(asset.size)})`;
+      }
+
       card.innerHTML = `
         <div class="asset-thumbnail-wrap">${thumbHtml}</div>
         <div class="asset-card-info">
           <span class="asset-card-title" title="${asset.name}">${asset.name}</span>
           <div class="asset-card-meta">
             <span class="asset-ext-badge ${extClass}">${asset.ext.replace('.', '')}</span>
-            <span class="asset-size-badge ${isSizeSort ? 'highlight-size' : ''}">${formatBytes(asset.size)}</span>
+            <span class="asset-size-badge ${isSizeSort ? 'highlight-size' : ''}" title="${sizeBadgeTitle}">${sizeBadgeContent}</span>
             <span>• ${asset.pak_name}</span>
           </div>
         </div>
@@ -503,15 +614,25 @@
     // Update header info
     el.selectedAssetType.textContent = asset.ext.replace('.', '');
     el.selectedAssetName.textContent = asset.name;
-    el.selectedAssetPak.textContent = `Archive: ${asset.pak_name} (${formatBytes(asset.size)})`;
+    if (asset.ext === '.CMP') {
+      const uncomp = asset.uncompressed_size || (state.selectedDetails && state.selectedDetails.uncompressed_size) || 65532;
+      el.selectedAssetPak.textContent = `Archive: ${asset.pak_name} (${formatBytes(uncomp)} - Uncompressed value shown)`;
+    } else {
+      el.selectedAssetPak.textContent = `Archive: ${asset.pak_name} (${formatBytes(asset.size)})`;
+    }
 
     // Reset controls
     stopAllPlayback();
+    state.reapplyZoom = null;
+    el.interactiveControls.innerHTML = '';
 
     // Fetch full details
     try {
       const res = await fetch(`/api/asset/details?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}`);
       state.selectedDetails = await res.json();
+      if (asset.ext === '.CMP' && state.selectedDetails && state.selectedDetails.uncompressed_size) {
+        el.selectedAssetPak.textContent = `Archive: ${asset.pak_name} (${formatBytes(state.selectedDetails.uncompressed_size)} - Uncompressed value shown)`;
+      }
     } catch (e) {
       state.selectedDetails = asset;
     }
@@ -520,7 +641,9 @@
     const SCRIPT_EXTS = ['.EMC', '.FMC', '.GMC', '.DLE', '.DLF', '.DLG', '.ENG', '.FRE', '.GER'];
     if (SCRIPT_EXTS.includes(asset.ext)) {
       renderScriptViewer(asset, state.selectedDetails);
-    } else if (['.CPS', '.CMP'].includes(asset.ext)) {
+    } else if (asset.ext === '.CMP') {
+      renderCmpTransitionViewer(asset, state.selectedDetails);
+    } else if (asset.ext === '.CPS') {
       renderBackgroundViewer(asset, state.selectedDetails);
     } else if (['.SHP', '.CSH'].includes(asset.ext)) {
       renderModelViewer(asset, state.selectedDetails);
@@ -532,6 +655,8 @@
       renderMidiViewer(asset, state.selectedDetails);
     } else if (asset.ext === '.VOC') {
       renderVocViewer(asset, state.selectedDetails);
+    } else if (asset.ext === '.FNT') {
+      renderFontViewer(asset, state.selectedDetails);
     } else {
       renderRawViewer(asset, state.selectedDetails);
     }
@@ -539,94 +664,859 @@
 
   // 1. Background Viewer (.CPS)
   function renderBackgroundViewer(asset, details) {
-    const previewUrl = `/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}`;
-    const exportUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}`;
+    if (state.cpsAnimTimer) {
+      clearInterval(state.cpsAnimTimer);
+      state.cpsAnimTimer = null;
+    }
+
+    const isCmp = asset.ext === '.CMP';
+    const linkedWsas = details.linked_wsas || [];
+    const hasLinkedWsas = linkedWsas.length > 0;
+
+    // Load custom layer order if previously saved
+    const layerStorageKey = `cps_layer_order_${asset.pak_name}_${asset.name}`;
+    let orderedWsas = [...linkedWsas];
+    try {
+      const raw = localStorage.getItem(layerStorageKey);
+      if (raw) {
+        const savedOrder = JSON.parse(raw);
+        if (Array.isArray(savedOrder) && savedOrder.length > 0) {
+          const mapByName = new Map(linkedWsas.map(w => [w.name.toUpperCase(), w]));
+          const reordered = [];
+          savedOrder.forEach(name => {
+            const up = String(name).toUpperCase();
+            if (mapByName.has(up)) {
+              reordered.push(mapByName.get(up));
+              mapByName.delete(up);
+            }
+          });
+          mapByName.forEach(w => reordered.push(w));
+          orderedWsas = reordered;
+        }
+      }
+    } catch (e) {}
+
+    // Initialize selected animations set for this asset (all selected by default)
+    state.cpsSelectedAnims = new Set(linkedWsas.map(w => w.name.toUpperCase()));
+
+    function getSelectedAnims() {
+      return orderedWsas.filter(w => state.cpsSelectedAnims.has(w.name.toUpperCase()));
+    }
+
+    function getAnimPos(anim) {
+      try {
+        const raw = localStorage.getItem(`wsa_offset_${anim.pak_name}_${anim.name}`);
+        if (raw) {
+          const p = JSON.parse(raw);
+          if (typeof p.x === 'number' && typeof p.y === 'number') {
+            return { x: p.x, y: p.y };
+          }
+        }
+      } catch (e) {}
+      return { x: anim.pos_x, y: anim.pos_y };
+    }
+
+    function updateCpsUrls() {
+      const cropParam = state.cropBottomPanel ? '&crop_panel=1' : '';
+      const selected = getSelectedAnims();
+      const hasSelected = selected.length > 0;
+      const animsParam = (selected.length > 0)
+        ? `&anims=${encodeURIComponent(selected.map(w => w.name).join(','))}`
+        : '';
+      const customPositions = selected
+        .map(w => {
+          const p = getAnimPos(w);
+          if (p.x !== w.pos_x || p.y !== w.pos_y) {
+            return `${w.name}:${p.x},${p.y}`;
+          }
+          return null;
+        })
+        .filter(Boolean);
+      const posParam = customPositions.length > 0 ? `&positions=${encodeURIComponent(customPositions.join(';'))}` : '';
+      const animParam = (state.cpsWithAnims && hasSelected) ? `&with_anims=1${animsParam}${posParam}` : '';
+
+      const previewUrl = `/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}${cropParam}`;
+      const exportPngUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}${animParam}${cropParam}`;
+      const exportGifUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&gif=1${animParam}${cropParam}`;
+
+      const baseName = asset.name.replace(/\.(CPS|CMP)$/i, '');
+      const animSuffix = (state.cpsWithAnims && hasSelected)
+        ? (selected.length < linkedWsas.length ? `_${selected.length}anims` : '_animated')
+        : '';
+      const suffix = state.cropBottomPanel ? '_scene' : '';
+
+      const stageImg = document.getElementById('stageImg');
+      if (stageImg && !state.cpsWithAnims) {
+        stageImg.src = previewUrl;
+      }
+
+      const exportPngBtn = document.getElementById('exportCpsPngBtn');
+      if (exportPngBtn) {
+        exportPngBtn.href = exportPngUrl;
+        exportPngBtn.download = `${baseName}${animSuffix}${suffix}.png`;
+        const labelSpan = exportPngBtn.querySelector('span');
+        if (labelSpan) {
+          labelSpan.textContent = (state.cpsWithAnims && hasSelected)
+            ? `Export Scene Picture (${selected.length} anim${selected.length > 1 ? 's' : ''})`
+            : 'Export PNG Picture';
+        }
+      }
+
+      const exportGifBtn = document.getElementById('exportCpsGifBtn');
+      if (exportGifBtn) {
+        exportGifBtn.href = exportGifUrl;
+        exportGifBtn.download = `${baseName}${animSuffix}${suffix}.gif`;
+        const labelSpan = exportGifBtn.querySelector('span');
+        if (labelSpan) {
+          labelSpan.textContent = (state.cpsWithAnims && hasSelected)
+            ? `Export Scene Animation (${selected.length} anim${selected.length > 1 ? 's' : ''})`
+            : 'Export GIF';
+        }
+      }
+
+      const dimChip = document.getElementById('cpsDimensionsChip');
+      if (dimChip) {
+        if (isCmp) {
+          dimChip.textContent = '256x256 px (Color Lighting Matrix)';
+        } else {
+          dimChip.textContent = state.cropBottomPanel ? '320x144 px (Scene Viewport)' : (details.dimensions || '320x200 px (Full Frame)');
+        }
+      }
+
+      const metaChipAnims = document.getElementById('cpsLinkedAnimsChip');
+      if (metaChipAnims) {
+        metaChipAnims.innerHTML = `Linked Animations: <strong style="color: var(--accent-emerald-light);">${selected.length} of ${linkedWsas.length} active</strong>`;
+      }
+
+      const toggleSceneAnimsBtn = document.getElementById('toggleSceneAnimsBtn');
+      if (toggleSceneAnimsBtn) {
+        const span = toggleSceneAnimsBtn.querySelector('span');
+        if (span) {
+          span.textContent = `🎬 Include Animations (${selected.length}/${linkedWsas.length})`;
+        }
+      }
+
+      const toggleAnimListBtn = document.getElementById('toggleAnimListBtn');
+      if (toggleAnimListBtn) {
+        const span = toggleAnimListBtn.querySelector('span');
+        if (span) {
+          span.textContent = `⚙️ Layers & Animations (${selected.length}/${linkedWsas.length}) ▾`;
+        }
+      }
+
+      const countBadge = document.getElementById('cpsAnimsCountBadge');
+      if (countBadge) {
+        countBadge.textContent = `${selected.length} of ${linkedWsas.length} active`;
+      }
+    }
+
+    const baseName = asset.name.replace(/\.(CPS|CMP)$/i, '');
+    const initialCropParam = (!isCmp && state.cropBottomPanel) ? '&crop_panel=1' : '';
+    const initialAnimsParam = hasLinkedWsas ? `&anims=${encodeURIComponent(orderedWsas.map(w => w.name).join(','))}` : '';
+    const initialCustomPositions = hasLinkedWsas ? orderedWsas.map(w => {
+      const p = getAnimPos(w);
+      return (p.x !== w.pos_x || p.y !== w.pos_y) ? `${w.name}:${p.x},${p.y}` : null;
+    }).filter(Boolean) : [];
+    const initialPosParam = initialCustomPositions.length > 0 ? `&positions=${encodeURIComponent(initialCustomPositions.join(';'))}` : '';
+    const initialAnimParam = (state.cpsWithAnims && hasLinkedWsas) ? `&with_anims=1${initialAnimsParam}${initialPosParam}` : '';
+    const initialPreviewUrl = `/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}${initialCropParam}`;
+    const initialExportPngUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}${initialAnimParam}${initialCropParam}`;
+    const initialExportGifUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&gif=1${initialAnimParam}${initialCropParam}`;
 
     el.viewerActions.innerHTML = `
-      <a href="${exportUrl}" download="${asset.name.replace('.CPS', '.png')}" class="btn btn-primary glow-btn">
+      <a id="exportCpsPngBtn" href="${initialExportPngUrl}" download="${baseName}${(state.cpsWithAnims && hasLinkedWsas) ? '_animated' : ''}${state.cropBottomPanel ? '_scene' : ''}.png" class="btn btn-primary glow-btn">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
           <polyline points="7 10 12 15 17 10"></polyline>
           <line x1="12" y1="15" x2="12" y2="3"></line>
         </svg>
-        <span>Export PNG Picture</span>
+        <span>${(state.cpsWithAnims && hasLinkedWsas) ? `Export Scene Picture (${linkedWsas.length} anims)` : 'Export PNG Picture'}</span>
       </a>
+      <a id="exportCpsGifBtn" href="${initialExportGifUrl}" download="${baseName}${(state.cpsWithAnims && hasLinkedWsas) ? '_animated' : ''}${state.cropBottomPanel ? '_scene' : ''}.gif" class="btn btn-secondary">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polygon points="10 8 16 12 10 16 10 8"></polygon>
+        </svg>
+        <span>${(state.cpsWithAnims && hasLinkedWsas) ? `Export Scene Animation (${linkedWsas.length} anims)` : 'Export GIF'}</span>
+      </a>
+      ${asset.ext === '.CMP' ? `
+      <a href="/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&uncompressed=1" download="${baseName}.CPS" class="btn btn-secondary" title="Download Format 80 Uncompressed .CPS Background (${formatBytes(details.uncompressed_size || asset.uncompressed_size || 65532)})">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        <span>Download Uncompressed (.CPS - ${formatBytes(details.uncompressed_size || asset.uncompressed_size || 65532)})</span>
+      </a>
+      <a href="/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}" download="${asset.name}" class="btn btn-secondary" title="Download Original Compressed Format 80 .CMP File (${formatBytes(asset.size)})">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        <span>Download Original (.CMP - ${formatBytes(asset.size)})</span>
+      </a>` : ''}
     `;
 
     el.viewerStage.innerHTML = `
       <div class="cps-viewport-stage" id="cpsViewportStage">
         <div class="cps-canvas-wrapper ${state.scanlinesActive ? 'crt-overlay' : ''}" id="imgWrap">
-          <img id="stageImg" src="${previewUrl}" class="display-canvas" alt="${asset.name}">
+          <img id="stageImg" src="${initialPreviewUrl}" class="display-canvas" alt="${asset.name}" style="${(state.cpsWithAnims && hasLinkedWsas) ? 'display: none;' : ''}">
+          <canvas id="cpsCanvas" width="${isCmp ? 256 : 320}" height="${(!isCmp && state.cropBottomPanel) ? 144 : (isCmp ? 256 : 200)}" class="display-canvas" style="${(!state.cpsWithAnims || !hasLinkedWsas) ? 'display: none;' : ''}"></canvas>
         </div>
       </div>
     `;
 
     // Metadata chips
+    const uncompSize = (details && details.uncompressed_size) || (asset && asset.uncompressed_size) || 65532;
+
     el.metaChips.innerHTML = `
-      <div class="meta-chip">Dimensions: <strong>${details.dimensions || '320x200'}</strong></div>
+      <div class="meta-chip">Dimensions: <strong id="cpsDimensionsChip">${isCmp ? '256x256 px (Color Lighting Matrix)' : (state.cropBottomPanel ? '320x144 px (Scene Viewport)' : (details.dimensions || '320x200 px (Full Frame)'))}</strong></div>
       <div class="meta-chip">Color Depth: <strong>256 VGA Colors</strong></div>
-      <div class="meta-chip">Compression: <strong>Format 80 (LCW)</strong></div>
-      <div class="meta-chip">File Size: <strong>${formatBytes(asset.size)}</strong></div>
+      ${isCmp ? `
+        <div class="meta-chip highlight-chip" style="border-color: rgba(52, 211, 153, 0.4); background: rgba(16, 185, 129, 0.14);">
+          File Size: <strong style="color: #34d399;">${formatBytes(uncompSize)} (Uncompressed)</strong>
+        </div>
+        <div class="meta-chip" style="background: rgba(59, 130, 246, 0.15); border-color: rgba(96, 165, 250, 0.35); color: #93c5fd;">
+          ⚡ <strong>Uncompressed value shown</strong>
+        </div>
+        <div class="meta-chip">Compressed Size: <strong>${formatBytes(asset.size)}</strong></div>
+        <div class="meta-chip">Compression: <strong>Format 80 (LCW)${details.compression_ratio ? ` (${details.compression_ratio})` : ''}</strong></div>
+      ` : `
+        <div class="meta-chip">Compression: <strong>Format 80 (LCW)${details.compression_ratio ? ` (${details.compression_ratio})` : ''}</strong></div>
+        ${details.uncompressed_size ? `<div class="meta-chip">Uncompressed: <strong>${formatBytes(details.uncompressed_size)}</strong></div>` : ''}
+        <div class="meta-chip">File Size: <strong>${formatBytes(asset.size)}</strong></div>
+      `}
+      ${hasLinkedWsas ? `<div class="meta-chip" id="cpsLinkedAnimsChip" title="${linkedWsas.map(w => w.name).join(', ')}">Linked Animations: <strong style="color: var(--accent-emerald-light);">${state.cpsSelectedAnims.size} of ${linkedWsas.length} active</strong></div>` : ''}
     `;
 
-    // Interactive controls: Multiplier buttons & CRT scanlines
-    el.interactiveControls.innerHTML = `
-      <div class="ctrl-btn-group" title="Zoom Multiplier">
-        <button class="ctrl-btn ${state.zoomLevel === 'fit' ? 'active' : ''}" data-zoom="fit" title="Fit to Preview Window">Fit</button>
-        <button class="ctrl-btn ${state.zoomLevel === 1 ? 'active' : ''}" data-zoom="1" title="1x (320x200)">1x</button>
-        <button class="ctrl-btn ${state.zoomLevel === 2 ? 'active' : ''}" data-zoom="2" title="2x (640x400)">2x</button>
-        <button class="ctrl-btn ${state.zoomLevel === 3 ? 'active' : ''}" data-zoom="3" title="3x (960x600)">3x</button>
-        <button class="ctrl-btn ${state.zoomLevel === 4 ? 'active' : ''}" data-zoom="4" title="4x (1280x800)">4x</button>
-      </div>
-
-      <button id="toggleCrtBtn" class="btn btn-secondary ${state.scanlinesActive ? 'active' : ''}" style="font-size: 0.78rem;">
-        <span>📺 CRT Scanlines</span>
+    // Interactive controls: Multiplier buttons, Remove Bottom Panel checkbox, Include Animations button, Select Animations picker & CRT scanlines
+    const animToggleBtnHtml = hasLinkedWsas ? `
+      <button id="toggleSceneAnimsBtn" class="btn ${state.cpsWithAnims ? 'btn-primary glow-btn active' : 'btn-secondary'}" style="font-size: 0.78rem;" title="Play selected linked WSA animation overlays over this background scene">
+        <span>🎬 Include Animations (${state.cpsSelectedAnims.size}/${linkedWsas.length})</span>
       </button>
+      <button id="toggleAnimListBtn" class="btn btn-secondary" style="font-size: 0.78rem;" title="Manage animation layers, visibility order, and solo isolates">
+        <span>⚙️ Layers & Animations (${state.cpsSelectedAnims.size}/${linkedWsas.length}) ▾</span>
+      </button>
+    ` : '';
+
+    const animPickerHtml = hasLinkedWsas ? `
+      <div class="cps-anims-picker-panel" id="cpsAnimsPickerPanel" style="display: none;">
+        <div class="cps-anims-picker-header">
+          <div class="cps-anims-picker-title">
+            <span>🎬 Animation Layers & Visibility</span>
+            <span class="cps-anims-count-badge" id="cpsAnimsCountBadge">${state.cpsSelectedAnims.size} of ${linkedWsas.length} active</span>
+          </div>
+          <div class="cps-anims-picker-actions">
+            <button class="cps-anims-action-btn" id="animSelectAllBtn" title="Include all animations in preview and export">Select All</button>
+            <button class="cps-anims-action-btn" id="animDeselectAllBtn" title="Exclude all animations">Deselect All</button>
+            <button class="cps-anims-action-btn" id="animResetOrderBtn" title="Reset animation layers to default order">↺ Reset Layers</button>
+            <button class="cps-anims-action-btn" id="animResetPositionsBtn" title="Reset all animation positions to default">↺ Reset Positions</button>
+            <button class="cps-anims-action-btn" id="animClosePickerBtn" title="Close layer panel">✕ Close</button>
+          </div>
+        </div>
+        <div class="cps-anims-grid" id="cpsAnimsGrid">
+        </div>
+      </div>
+    ` : '';
+
+    el.interactiveControls.innerHTML = `
+      <div class="cps-controls-row">
+        <div class="ctrl-btn-group" title="Zoom Multiplier">
+          <button class="ctrl-btn ${state.zoomLevel === 'fit' ? 'active' : ''}" data-zoom="fit" title="Fit to Preview Window">Fit</button>
+          <button class="ctrl-btn ${state.zoomLevel === 1 ? 'active' : ''}" data-zoom="1" title="1x">1x</button>
+          <button class="ctrl-btn ${state.zoomLevel === 2 ? 'active' : ''}" data-zoom="2" title="2x">2x</button>
+          <button class="ctrl-btn ${state.zoomLevel === 3 ? 'active' : ''}" data-zoom="3" title="3x">3x</button>
+          <button class="ctrl-btn ${state.zoomLevel === 4 ? 'active' : ''}" data-zoom="4" title="4x">4x</button>
+        </div>
+
+        ${!isCmp ? `
+        <label class="ctrl-checkbox-label" title="Remove the bottom 56px interface panel (crops from 320x200 down to 320x144 scene viewport)">
+          <input type="checkbox" id="cropBottomPanelCheck" ${state.cropBottomPanel ? 'checked' : ''}>
+          <span class="checkbox-text">Remove Bottom Panel (320x144)</span>
+        </label>
+        ` : ''}
+
+        ${animToggleBtnHtml}
+
+        <button id="toggleCrtBtn" class="btn btn-secondary ${state.scanlinesActive ? 'active' : ''}" style="font-size: 0.78rem;">
+          <span>📺 CRT Scanlines</span>
+        </button>
+      </div>
+      ${animPickerHtml}
     `;
 
     function applyCpsZoom(level, centerView = false) {
       state.zoomLevel = level;
-      const img = document.getElementById('stageImg');
+      const stageImg = document.getElementById('stageImg');
+      const cpsCanvas = document.getElementById('cpsCanvas');
       const wrap = document.getElementById('imgWrap');
-      if (!img || !wrap) return;
+      if (!wrap) return;
 
       el.interactiveControls.querySelectorAll('[data-zoom]').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.zoom === String(level));
       });
 
+      const nativeW = isCmp ? 256 : 320;
+      const nativeH = (!isCmp && state.cropBottomPanel) ? 144 : (details.height || (stageImg && stageImg.naturalHeight > 0 ? stageImg.naturalHeight : (isCmp ? 256 : 200)));
+      const aspect = nativeW / nativeH;
+
+      const elementsToResize = [stageImg, cpsCanvas].filter(Boolean);
+
       if (level === 'fit') {
-        wrap.style.width = '';
-        wrap.style.height = '';
-        img.style.width = '100%';
-        img.style.maxWidth = 'min(100%, calc((100vh - 280px) * 1.6))';
-        img.style.maxHeight = 'calc(100vh - 280px)';
-        img.style.height = 'auto';
-        img.style.aspectRatio = '320 / 200';
+        const stage = el.viewerStage;
+        const padX = 52;
+        const padY = 52;
+        const availW = Math.max((stage ? stage.clientWidth : window.innerWidth) - padX, 100);
+        const availH = Math.max((stage ? stage.clientHeight : window.innerHeight) - padY, 100);
+
+        let fitW, fitH;
+        if (availW / availH > aspect) {
+          // Viewport is wider than image aspect ratio -> fit to height of viewport
+          fitH = availH;
+          fitW = fitH * aspect;
+        } else {
+          // Viewport is taller/narrower than image aspect ratio -> fit to length (width) of viewport
+          fitW = availW;
+          fitH = fitW / aspect;
+        }
+
+        const roundedW = Math.round(fitW);
+        const roundedH = Math.round(fitH);
+        wrap.style.width = `${roundedW}px`;
+        wrap.style.height = `${roundedH}px`;
+        elementsToResize.forEach(elNode => {
+          elNode.style.width = `${roundedW}px`;
+          elNode.style.height = `${roundedH}px`;
+          elNode.style.maxWidth = 'none';
+          elNode.style.maxHeight = 'none';
+          elNode.style.aspectRatio = `${nativeW} / ${nativeH}`;
+        });
       } else {
         const mult = parseInt(level);
-        const w = 320 * mult;
-        const h = 200 * mult;
+        const w = nativeW * mult;
+        const h = nativeH * mult;
         wrap.style.width = `${w}px`;
         wrap.style.height = `${h}px`;
-        img.style.width = `${w}px`;
-        img.style.height = `${h}px`;
-        img.style.maxWidth = 'none';
-        img.style.maxHeight = 'none';
-        img.style.aspectRatio = '320 / 200';
+        elementsToResize.forEach(elNode => {
+          elNode.style.width = `${w}px`;
+          elNode.style.height = `${h}px`;
+          elNode.style.maxWidth = 'none';
+          elNode.style.maxHeight = 'none';
+          elNode.style.aspectRatio = `${nativeW} / ${nativeH}`;
+        });
       }
 
       requestAnimationFrame(() => {
-        if (centerView && level !== 'fit') {
-          const stage = el.viewerStage;
-          if (stage.scrollWidth > stage.clientWidth) {
-            stage.scrollLeft = (stage.scrollWidth - stage.clientWidth) / 2;
-          }
-          if (stage.scrollHeight > stage.clientHeight) {
-            stage.scrollTop = (stage.scrollHeight - stage.clientHeight) / 2;
+        const stage = el.viewerStage;
+        if (stage) {
+          if (level === 'fit') {
+            stage.scrollLeft = 0;
+            stage.scrollTop = 0;
+          } else if (centerView) {
+            if (stage.scrollWidth > stage.clientWidth) {
+              stage.scrollLeft = (stage.scrollWidth - stage.clientWidth) / 2;
+            }
+            if (stage.scrollHeight > stage.clientHeight) {
+              stage.scrollTop = (stage.scrollHeight - stage.clientHeight) / 2;
+            }
           }
         }
-        updatePanSliders();
+        updateViewportScrollState();
       });
+    }
+
+    // Register re-fit callback for responsive window / container resizing
+    state.reapplyZoom = () => {
+      applyCpsZoom(state.zoomLevel, false);
+    };
+
+    // Preload spritesheets for each linked WSA
+    linkedWsas.forEach(anim => {
+      anim._sheetImg = new Image();
+      anim._sheetReady = false;
+      anim._sheetImg.onload = () => {
+        anim._sheetReady = true;
+        if (state.cpsWithAnims && hasLinkedWsas) {
+          renderSceneFrame();
+        }
+      };
+      anim._sheetImg.src = `/api/asset/preview?pak=${encodeURIComponent(anim.pak_name)}&name=${encodeURIComponent(anim.name)}&sheet=1`;
+    });
+
+    let animTickCount = 0;
+    function renderSceneFrame() {
+      const canvas = document.getElementById('cpsCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const stageImg = document.getElementById('stageImg');
+      const targetH = state.cropBottomPanel ? 144 : 200;
+      if (canvas.width !== 320 || canvas.height !== targetH) {
+        canvas.width = 320;
+        canvas.height = targetH;
+      }
+      ctx.clearRect(0, 0, 320, targetH);
+      if (stageImg && stageImg.complete && stageImg.naturalWidth > 0) {
+        ctx.drawImage(stageImg, 0, 0, 320, targetH, 0, 0, 320, targetH);
+      }
+      orderedWsas.forEach(anim => {
+        if (state.cpsSelectedAnims.has(anim.name.toUpperCase()) && anim._sheetReady) {
+          const frameIdx = animTickCount % anim.num_frames;
+          const cols = Math.min(anim.num_frames, 8);
+          const col = frameIdx % cols;
+          const row = Math.floor(frameIdx / cols);
+          const sx = col * anim.width;
+          const sy = row * anim.height;
+          const pos = getAnimPos(anim);
+          ctx.drawImage(anim._sheetImg, sx, sy, anim.width, anim.height, pos.x, pos.y, anim.width, anim.height);
+        }
+      });
+
+      if (draggedCpsAnim || hoveredCpsAnim) {
+        const activeA = draggedCpsAnim || hoveredCpsAnim;
+        const p = getAnimPos(activeA);
+        ctx.save();
+        ctx.strokeStyle = draggedCpsAnim ? '#38bdf8' : 'rgba(56, 189, 248, 0.75)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash(draggedCpsAnim ? [4, 2] : [3, 2]);
+        ctx.strokeRect(p.x + 0.5, p.y + 0.5, activeA.width - 1, activeA.height - 1);
+        ctx.restore();
+      }
+    }
+
+    function startCpsAnimation() {
+      if (state.cpsAnimTimer) clearInterval(state.cpsAnimTimer);
+      renderSceneFrame();
+      state.cpsAnimTimer = setInterval(() => {
+        animTickCount++;
+        renderSceneFrame();
+      }, 100);
+    }
+
+    function stopCpsAnimation() {
+      if (state.cpsAnimTimer) {
+        clearInterval(state.cpsAnimTimer);
+        state.cpsAnimTimer = null;
+      }
+    }
+
+    // Toggle button listener
+    const toggleSceneAnimsBtn = document.getElementById('toggleSceneAnimsBtn');
+    if (toggleSceneAnimsBtn) {
+      toggleSceneAnimsBtn.addEventListener('click', () => {
+        if (!state.cpsWithAnims && state.cpsSelectedAnims.size === 0) {
+          orderedWsas.forEach(w => state.cpsSelectedAnims.add(w.name.toUpperCase()));
+          renderAnimCards();
+        }
+        state.cpsWithAnims = !state.cpsWithAnims;
+        toggleSceneAnimsBtn.classList.toggle('active', state.cpsWithAnims);
+        toggleSceneAnimsBtn.classList.toggle('btn-primary', state.cpsWithAnims);
+        toggleSceneAnimsBtn.classList.toggle('glow-btn', state.cpsWithAnims);
+        toggleSceneAnimsBtn.classList.toggle('btn-secondary', !state.cpsWithAnims);
+
+        const stageImg = document.getElementById('stageImg');
+        const canvas = document.getElementById('cpsCanvas');
+        if (stageImg && canvas) {
+          if (state.cpsWithAnims) {
+            stageImg.style.display = 'none';
+            canvas.style.display = 'block';
+            startCpsAnimation();
+          } else {
+            stopCpsAnimation();
+            canvas.style.display = 'none';
+            stageImg.style.display = 'block';
+          }
+        }
+        updateCpsUrls();
+        applyCpsZoom(state.zoomLevel, false);
+      });
+    }
+
+    // Picker panel listeners
+    const toggleAnimListBtn = document.getElementById('toggleAnimListBtn');
+    const animPickerPanel = document.getElementById('cpsAnimsPickerPanel');
+    if (toggleAnimListBtn && animPickerPanel) {
+      toggleAnimListBtn.addEventListener('click', () => {
+        const isHidden = animPickerPanel.style.display === 'none';
+        animPickerPanel.style.display = isHidden ? 'flex' : 'none';
+        toggleAnimListBtn.classList.toggle('active', isHidden);
+      });
+    }
+
+    let hoveredCpsAnim = null;
+    let draggedCpsAnim = null;
+    let dragGrabX = 0;
+    let dragGrabY = 0;
+
+    function getCpsCanvasCoords(clientX, clientY) {
+      const canvas = document.getElementById('cpsCanvas');
+      if (!canvas) return { x: 0, y: 0 };
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      return {
+        x: (clientX - rect.left) * scaleX,
+        y: (clientY - rect.top) * scaleY
+      };
+    }
+
+    function findAnimAtCoords(cx, cy) {
+      for (let i = orderedWsas.length - 1; i >= 0; i--) {
+        const anim = orderedWsas[i];
+        if (state.cpsSelectedAnims.has(anim.name.toUpperCase())) {
+          const pos = getAnimPos(anim);
+          if (cx >= pos.x && cx <= pos.x + anim.width && cy >= pos.y && cy <= pos.y + anim.height) {
+            return anim;
+          }
+        }
+      }
+      return null;
+    }
+
+    function bindAnimCardEvents() {
+      const animPickerPanel = document.getElementById('cpsAnimsPickerPanel');
+      if (!animPickerPanel) return;
+
+      animPickerPanel.querySelectorAll('.cps-anim-card').forEach(card => {
+        const animName = card.dataset.anim;
+        const cb = card.querySelector('.cps-anim-checkbox');
+        const soloBtn = card.querySelector('.cps-anim-solo-btn');
+        const select = card.querySelector('.cps-layer-select');
+        const upBtn = card.querySelector('.cps-layer-up');
+        const downBtn = card.querySelector('.cps-layer-down');
+        const posXInput = card.querySelector('.cps-pos-x');
+        const posYInput = card.querySelector('.cps-pos-y');
+        const resetPosBtn = card.querySelector('.cps-pos-reset-btn');
+        const animObj = orderedWsas.find(w => w.name.toUpperCase() === animName.toUpperCase());
+
+        function updateCardPos(newX, newY, save = true) {
+          if (!animObj) return;
+          const pos = { x: Math.round(newX), y: Math.round(newY) };
+          if (posXInput && document.activeElement !== posXInput) posXInput.value = pos.x;
+          if (posYInput && document.activeElement !== posYInput) posYInput.value = pos.y;
+
+          const isDefault = (pos.x === animObj.pos_x && pos.y === animObj.pos_y);
+          if (resetPosBtn) resetPosBtn.disabled = isDefault;
+
+          const coordsEl = card.querySelector('.cps-pos-coords');
+          if (coordsEl) coordsEl.textContent = `(${pos.x}, ${pos.y})`;
+
+          let origEl = card.querySelector('.cps-pos-orig');
+          if (!isDefault) {
+            if (!origEl) {
+              const specs = card.querySelector('.cps-anim-specs');
+              if (specs) {
+                origEl = document.createElement('span');
+                origEl.className = 'cps-pos-orig';
+                origEl.style.cssText = 'opacity:0.7; font-size:0.62rem;';
+                specs.appendChild(document.createTextNode(' '));
+                specs.appendChild(origEl);
+              }
+            }
+            if (origEl) origEl.textContent = `(Orig: ${animObj.pos_x}, ${animObj.pos_y})`;
+          } else if (origEl) {
+            origEl.remove();
+          }
+
+          if (save) {
+            try {
+              if (isDefault) {
+                localStorage.removeItem(`wsa_offset_${animObj.pak_name}_${animObj.name}`);
+              } else {
+                localStorage.setItem(`wsa_offset_${animObj.pak_name}_${animObj.name}`, JSON.stringify(pos));
+              }
+            } catch (err) {}
+          }
+
+          updateCpsUrls();
+          if (state.cpsWithAnims) renderSceneFrame();
+        }
+
+        if (posXInput) {
+          posXInput.addEventListener('change', () => {
+            const x = parseInt(posXInput.value) || 0;
+            const curY = parseInt(posYInput ? posYInput.value : (animObj ? animObj.pos_y : 0)) || 0;
+            updateCardPos(x, curY, true);
+          });
+        }
+
+        if (posYInput) {
+          posYInput.addEventListener('change', () => {
+            const curX = parseInt(posXInput ? posXInput.value : (animObj ? animObj.pos_x : 0)) || 0;
+            const y = parseInt(posYInput.value) || 0;
+            updateCardPos(curX, y, true);
+          });
+        }
+
+        if (resetPosBtn && animObj) {
+          resetPosBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            try {
+              localStorage.removeItem(`wsa_offset_${animObj.pak_name}_${animObj.name}`);
+            } catch (err) {}
+            updateCardPos(animObj.pos_x, animObj.pos_y, false);
+          });
+        }
+
+        if (cb) {
+          cb.addEventListener('change', () => {
+            const upName = animName.toUpperCase();
+            if (cb.checked) {
+              state.cpsSelectedAnims.add(upName);
+            } else {
+              state.cpsSelectedAnims.delete(upName);
+            }
+            card.classList.toggle('selected', cb.checked);
+            updateCpsUrls();
+            if (state.cpsWithAnims) renderSceneFrame();
+          });
+        }
+
+        if (select) {
+          select.addEventListener('change', (e) => {
+            const targetIdx = parseInt(e.target.value);
+            const curIdx = orderedWsas.findIndex(w => w.name.toUpperCase() === animName.toUpperCase());
+            if (curIdx !== -1 && targetIdx >= 0 && targetIdx < orderedWsas.length && curIdx !== targetIdx) {
+              const [moved] = orderedWsas.splice(curIdx, 1);
+              orderedWsas.splice(targetIdx, 0, moved);
+              try {
+                localStorage.setItem(layerStorageKey, JSON.stringify(orderedWsas.map(w => w.name)));
+              } catch (err) {}
+              renderAnimCards();
+              updateCpsUrls();
+              if (state.cpsWithAnims) renderSceneFrame();
+            }
+          });
+        }
+
+        if (upBtn) {
+          upBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const curIdx = orderedWsas.findIndex(w => w.name.toUpperCase() === animName.toUpperCase());
+            if (curIdx !== -1 && curIdx < orderedWsas.length - 1) {
+              const [moved] = orderedWsas.splice(curIdx, 1);
+              orderedWsas.splice(curIdx + 1, 0, moved);
+              try {
+                localStorage.setItem(layerStorageKey, JSON.stringify(orderedWsas.map(w => w.name)));
+              } catch (err) {}
+              renderAnimCards();
+              updateCpsUrls();
+              if (state.cpsWithAnims) renderSceneFrame();
+            }
+          });
+        }
+
+        if (downBtn) {
+          downBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const curIdx = orderedWsas.findIndex(w => w.name.toUpperCase() === animName.toUpperCase());
+            if (curIdx > 0) {
+              const [moved] = orderedWsas.splice(curIdx, 1);
+              orderedWsas.splice(curIdx - 1, 0, moved);
+              try {
+                localStorage.setItem(layerStorageKey, JSON.stringify(orderedWsas.map(w => w.name)));
+              } catch (err) {}
+              renderAnimCards();
+              updateCpsUrls();
+              if (state.cpsWithAnims) renderSceneFrame();
+            }
+          });
+        }
+
+        if (soloBtn) {
+          soloBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            state.cpsSelectedAnims.clear();
+            state.cpsSelectedAnims.add(animName.toUpperCase());
+            if (!state.cpsWithAnims) {
+              state.cpsWithAnims = true;
+              if (toggleSceneAnimsBtn) {
+                toggleSceneAnimsBtn.classList.add('active', 'btn-primary', 'glow-btn');
+                toggleSceneAnimsBtn.classList.remove('btn-secondary');
+              }
+              const stageImg = document.getElementById('stageImg');
+              const canvas = document.getElementById('cpsCanvas');
+              if (stageImg && canvas) {
+                stageImg.style.display = 'none';
+                canvas.style.display = 'block';
+                startCpsAnimation();
+              }
+            }
+            renderAnimCards();
+            updateCpsUrls();
+            if (state.cpsWithAnims) renderSceneFrame();
+            applyCpsZoom(state.zoomLevel, false);
+          });
+        }
+      });
+    }
+
+    function renderAnimCards() {
+      const grid = document.getElementById('cpsAnimsGrid');
+      if (!grid) return;
+      const total = orderedWsas.length;
+
+      grid.innerHTML = orderedWsas.map((w, idx) => {
+        const isSel = state.cpsSelectedAnims.has(w.name.toUpperCase());
+        const layerNum = idx + 1;
+        const pos = getAnimPos(w);
+        const isDefault = (pos.x === w.pos_x && pos.y === w.pos_y);
+
+        return `
+          <div class="cps-anim-card ${isSel ? 'selected' : ''}" data-anim="${w.name}">
+            <label class="cps-anim-card-left" title="Toggle visibility of ${w.name}">
+              <input type="checkbox" value="${w.name}" ${isSel ? 'checked' : ''} class="cps-anim-checkbox">
+              <div class="cps-anim-info">
+                <span class="cps-anim-title" title="${w.name}">${w.name}</span>
+                <span class="cps-anim-specs">${w.num_frames} frames · ${w.width}x${w.height} @ <strong class="cps-pos-coords">(${pos.x}, ${pos.y})</strong>${!isDefault ? ` <span class="cps-pos-orig" style="opacity:0.7; font-size:0.62rem;">(Orig: ${w.pos_x}, ${w.pos_y})</span>` : ''}</span>
+              </div>
+            </label>
+            <div class="cps-anim-card-right">
+              <div class="cps-anim-pos-control" title="Move ${w.name} on scene">
+                <label class="cps-anim-pos-label" title="Horizontal position in pixels">
+                  <span>X</span>
+                  <input type="number" class="cps-pos-input cps-pos-x" data-anim="${w.name}" value="${pos.x}" step="1">
+                </label>
+                <label class="cps-anim-pos-label" title="Vertical position in pixels">
+                  <span>Y</span>
+                  <input type="number" class="cps-pos-input cps-pos-y" data-anim="${w.name}" value="${pos.y}" step="1">
+                </label>
+                <button class="cps-pos-reset-btn" data-anim="${w.name}" title="Reset ${w.name} to default position (${w.pos_x}, ${w.pos_y})" ${isDefault ? 'disabled' : ''}>↺</button>
+              </div>
+              <div class="cps-layer-control" title="Layer ${layerNum} of ${total}: 1 is bottom/back, ${total} is top/front">
+                <span class="cps-layer-badge" title="Current layer: ${layerNum}">L${layerNum}</span>
+                <select class="cps-layer-select" data-anim="${w.name}" title="Change layer for ${w.name}">
+                  ${orderedWsas.map((_, i) => `<option value="${i}" ${i === idx ? 'selected' : ''}>${i + 1}${i === 0 ? ' (Back)' : (i === total - 1 ? ' (Front)' : '')}</option>`).join('')}
+                </select>
+                <button class="cps-layer-btn cps-layer-down" data-anim="${w.name}" title="Send Backward (Lower Layer)" ${idx === 0 ? 'disabled' : ''}>▼</button>
+                <button class="cps-layer-btn cps-layer-up" data-anim="${w.name}" title="Bring Forward (Higher Layer)" ${idx === total - 1 ? 'disabled' : ''}>▲</button>
+              </div>
+              <button class="cps-anim-solo-btn" data-anim="${w.name}" title="Solo: isolate only ${w.name}">Solo</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      bindAnimCardEvents();
+    }
+
+    if (hasLinkedWsas) {
+      renderAnimCards();
+
+      document.getElementById('animSelectAllBtn')?.addEventListener('click', () => {
+        orderedWsas.forEach(w => state.cpsSelectedAnims.add(w.name.toUpperCase()));
+        renderAnimCards();
+        updateCpsUrls();
+        if (state.cpsWithAnims) renderSceneFrame();
+      });
+
+      document.getElementById('animDeselectAllBtn')?.addEventListener('click', () => {
+        state.cpsSelectedAnims.clear();
+        renderAnimCards();
+        updateCpsUrls();
+        if (state.cpsWithAnims) renderSceneFrame();
+      });
+
+      document.getElementById('animResetOrderBtn')?.addEventListener('click', () => {
+        try {
+          localStorage.removeItem(layerStorageKey);
+        } catch (err) {}
+        orderedWsas = [...linkedWsas];
+        renderAnimCards();
+        updateCpsUrls();
+        if (state.cpsWithAnims) renderSceneFrame();
+      });
+
+      document.getElementById('animResetPositionsBtn')?.addEventListener('click', () => {
+        orderedWsas.forEach(w => {
+          try {
+            localStorage.removeItem(`wsa_offset_${w.pak_name}_${w.name}`);
+          } catch (err) {}
+        });
+        renderAnimCards();
+        updateCpsUrls();
+        if (state.cpsWithAnims) renderSceneFrame();
+        showToast('Animation coordinates reset to engine defaults', 'info');
+      });
+
+      document.getElementById('animClosePickerBtn')?.addEventListener('click', () => {
+        if (animPickerPanel) animPickerPanel.style.display = 'none';
+        if (toggleAnimListBtn) toggleAnimListBtn.classList.remove('active');
+      });
+
+      const cpsCanvasEl = document.getElementById('cpsCanvas');
+      if (cpsCanvasEl) {
+        function onCpsWindowMouseMove(e) {
+          if (!draggedCpsAnim) return;
+          const { x, y } = getCpsCanvasCoords(e.clientX, e.clientY);
+          const newX = Math.round(x - dragGrabX);
+          const newY = Math.round(y - dragGrabY);
+          try {
+            if (newX === draggedCpsAnim.pos_x && newY === draggedCpsAnim.pos_y) {
+              localStorage.removeItem(`wsa_offset_${draggedCpsAnim.pak_name}_${draggedCpsAnim.name}`);
+            } else {
+              localStorage.setItem(`wsa_offset_${draggedCpsAnim.pak_name}_${draggedCpsAnim.name}`, JSON.stringify({ x: newX, y: newY }));
+            }
+          } catch (err) {}
+
+          const card = animPickerPanel?.querySelector(`.cps-anim-card[data-anim="${draggedCpsAnim.name}"]`);
+          if (card) {
+            const inX = card.querySelector('.cps-pos-x');
+            const inY = card.querySelector('.cps-pos-y');
+            const resetBtn = card.querySelector('.cps-pos-reset-btn');
+            const coordsEl = card.querySelector('.cps-pos-coords');
+            if (inX && document.activeElement !== inX) inX.value = newX;
+            if (inY && document.activeElement !== inY) inY.value = newY;
+            if (resetBtn) resetBtn.disabled = (newX === draggedCpsAnim.pos_x && newY === draggedCpsAnim.pos_y);
+            if (coordsEl) coordsEl.textContent = `(${newX}, ${newY})`;
+          }
+          renderSceneFrame();
+        }
+
+        function onCpsWindowMouseUp(e) {
+          if (!draggedCpsAnim) return;
+          draggedCpsAnim = null;
+          window.removeEventListener('mousemove', onCpsWindowMouseMove);
+          window.removeEventListener('mouseup', onCpsWindowMouseUp);
+          updateCpsUrls();
+          renderAnimCards();
+          renderSceneFrame();
+          const { x, y } = getCpsCanvasCoords(e.clientX, e.clientY);
+          hoveredCpsAnim = findAnimAtCoords(x, y);
+          cpsCanvasEl.style.cursor = hoveredCpsAnim ? 'grab' : 'default';
+        }
+
+        cpsCanvasEl.addEventListener('mousemove', (e) => {
+          if (draggedCpsAnim || !state.cpsWithAnims) return;
+          const { x, y } = getCpsCanvasCoords(e.clientX, e.clientY);
+          const over = findAnimAtCoords(x, y);
+          if (over !== hoveredCpsAnim) {
+            hoveredCpsAnim = over;
+            renderSceneFrame();
+          }
+          cpsCanvasEl.style.cursor = over ? 'grab' : 'default';
+        });
+
+        cpsCanvasEl.addEventListener('mouseleave', () => {
+          if (hoveredCpsAnim && !draggedCpsAnim) {
+            hoveredCpsAnim = null;
+            renderSceneFrame();
+          }
+        });
+
+        cpsCanvasEl.addEventListener('mousedown', (e) => {
+          if (e.button !== 0 || !state.cpsWithAnims) return;
+          const { x, y } = getCpsCanvasCoords(e.clientX, e.clientY);
+          const targetAnim = findAnimAtCoords(x, y);
+          if (targetAnim) {
+            draggedCpsAnim = targetAnim;
+            const pos = getAnimPos(targetAnim);
+            dragGrabX = x - pos.x;
+            dragGrabY = y - pos.y;
+            cpsCanvasEl.style.cursor = 'grabbing';
+            window.addEventListener('mousemove', onCpsWindowMouseMove);
+            window.addEventListener('mouseup', onCpsWindowMouseUp);
+            renderSceneFrame();
+          }
+        });
+      }
+    }
+
+    if (state.cpsWithAnims && hasLinkedWsas) {
+      startCpsAnimation();
     }
 
     // Zoom listeners
@@ -658,15 +1548,319 @@
       el.metaChips.appendChild(palWrap);
     }
 
+    const cropBottomPanelCheck = document.getElementById('cropBottomPanelCheck');
+    if (cropBottomPanelCheck) {
+      cropBottomPanelCheck.addEventListener('change', (e) => {
+        state.cropBottomPanel = e.target.checked;
+        const canvas = document.getElementById('cpsCanvas');
+        if (canvas) {
+          canvas.height = state.cropBottomPanel ? 144 : 200;
+        }
+        updateCpsUrls();
+        if (state.cpsWithAnims && hasLinkedWsas) {
+          renderSceneFrame();
+        }
+        applyCpsZoom(state.zoomLevel, false);
+      });
+    }
+
     const stageImg = document.getElementById('stageImg');
     if (stageImg) {
       stageImg.onload = () => {
-        updatePanSliders();
+        if (state.cpsWithAnims && hasLinkedWsas) {
+          renderSceneFrame();
+        }
+        applyCpsZoom(state.zoomLevel, false);
+        updateViewportScrollState();
       };
     }
 
     // Apply active zoom sizing immediately
     applyCpsZoom(state.zoomLevel, false);
+  }
+
+  // 1b. Cutscene Transition Table Viewer (.CMP) - Description View (No Preview Image)
+  async function renderCmpTransitionViewer(asset, details) {
+    stopAllPlayback();
+
+    const baseName = asset.name.replace(/\.CMP$/i, '');
+    const exportBinUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&uncompressed=1`;
+    const exportCmpUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}`;
+
+    el.viewerActions.innerHTML = `
+      <a href="${exportBinUrl}" download="${baseName}.BIN" class="btn btn-primary glow-btn" title="Download Uncompressed 64KB Lookup Table">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        <span>Download Uncompressed Table (.BIN - 64 KB)</span>
+      </a>
+      <a href="${exportCmpUrl}" download="${asset.name}" class="btn btn-secondary" title="Download Compressed Format 80 .CMP File">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        <span>Download Original (.CMP - ${formatBytes(asset.size)})</span>
+      </a>
+    `;
+
+    const uncompSize = (details && details.uncompressed_size) || (asset && asset.uncompressed_size) || 65532;
+
+    el.metaChips.innerHTML = `
+      <div class="meta-chip">Type: <strong>Transition Color Table (.CMP)</strong></div>
+      <div class="meta-chip highlight-chip" style="border-color: rgba(52, 211, 153, 0.4); background: rgba(16, 185, 129, 0.14);">
+        Uncompressed: <strong style="color: #34d399;">${formatBytes(uncompSize)} (Uncompressed value shown)</strong>
+      </div>
+      <div class="meta-chip">Compressed: <strong>${formatBytes(asset.size)}</strong></div>
+      <div class="meta-chip">Compression: <strong>Format 80 (LCW)${details.compression_ratio ? ` (${details.compression_ratio})` : ''}</strong></div>
+      <div class="meta-chip" style="background: rgba(239, 68, 68, 0.14); border-color: rgba(239, 68, 68, 0.4); color: #fca5a5;">
+        Status: <strong>Hidden by default (Non-useful)</strong>
+      </div>
+      <div class="meta-chip">Routine: <code>nestedFrameFadeTransition()</code></div>
+    `;
+
+    el.interactiveControls.innerHTML = '';
+
+    el.viewerStage.innerHTML = `
+      <div class="cmp-stage-container">
+        <div class="cmp-description-card">
+          <div class="cmp-desc-header">
+            <span class="cmp-desc-icon">🔀</span>
+            <div class="cmp-desc-titles">
+              <h2 class="cmp-desc-title">${escapeHtml(asset.name)}</h2>
+              <span class="cmp-desc-subtitle">Westwood Cutscene Cross-Fade Transition Table • Archive: ${escapeHtml(asset.pak_name)}</span>
+            </div>
+            <span class="cmp-hidden-pill" title="Hidden by default under 'Hide non-useful files' filter">Hidden File Type</span>
+          </div>
+
+          <div class="cmp-desc-body">
+            <div class="cmp-desc-section">
+              <h4 class="cmp-section-title">📌 File Description</h4>
+              <p class="cmp-desc-paragraph">
+                <strong>${escapeHtml(asset.name)}</strong> is <em>not an image or background scene</em>. It is a precomputed 256×256 ($65,536$-entry) mathematical color-blending lookup table used exclusively by Westwood's cutscene engine (<code>nestedFrameFadeTransition</code> in <code>sequences_hof.cpp</code>) during the game's cinematic intro sequence.
+              </p>
+            </div>
+
+            <div class="cmp-desc-section">
+              <h4 class="cmp-section-title">⚙️ Engine Function & Mechanics</h4>
+              <p class="cmp-desc-paragraph">
+                In 1993, 386 and 486 DOS PCs lacked hardware 3D acceleration or sufficient CPU power to calculate real-time software alpha-blending across 64,000 pixels at 60 fps. To create smooth cross-fades between intro scenes, Westwood precalculated a 64 KB lookup table that allowed single-cycle table indexing in assembly:
+              </p>
+              <pre class="cmp-code-block"><code>// From Westwood Studios / ScummVM Kyra Engine (screen_hof.cpp):
+for (int i = 0; i &lt; W2; i++) {
+    int ix = (*src++ &lt;&lt; 8) + *dst;
+    *dst++ = cmp[ix];   // Single instruction color blend lookup
+}</code></pre>
+              <p class="cmp-desc-paragraph">
+                The lookup indexes <code>(source_pixel &lt;&lt; 8) + dest_pixel</code> to obtain the optimal intermediate palette color. Applying this step 3 times in succession creates a smooth 3-stage cross-dissolve between animation frames.
+              </p>
+            </div>
+
+            <div class="cmp-desc-section">
+              <h4 class="cmp-section-title">📊 Technical Specifications</h4>
+              <div class="cmp-specs-grid">
+                <div class="cmp-spec-item">
+                  <span class="spec-label">Archive File:</span>
+                  <span class="spec-val">${escapeHtml(asset.pak_name)}</span>
+                </div>
+                <div class="cmp-spec-item">
+                  <span class="spec-label">Format:</span>
+                  <span class="spec-val">Westwood Format 80 (LCW)</span>
+                </div>
+                <div class="cmp-spec-item">
+                  <span class="spec-label">Uncompressed Size:</span>
+                  <span class="spec-val">65,532 bytes (64.0 KB uncompressed value shown)</span>
+                </div>
+                <div class="cmp-spec-item">
+                  <span class="spec-label">Compressed Size:</span>
+                  <span class="spec-val">${formatBytes(asset.size)} (${details.compression_ratio || ''})</span>
+                </div>
+                <div class="cmp-spec-item">
+                  <span class="spec-label">Table Dimensions:</span>
+                  <span class="spec-val">256 × 256 matrix (65,536 blend pairs)</span>
+                </div>
+                <div class="cmp-spec-item">
+                  <span class="spec-label">Classification:</span>
+                  <span class="spec-val">Non-image asset (Hidden file type)</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Interactive Color Morph & Fade Simulator -->
+            <div class="cmp-simulator-card" style="margin-top: 8px;">
+              <div class="cmp-card-header">
+                <span>⚡ Interactive Color Morph & Fade Simulator</span>
+                <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: normal;">Simulates the engine's 3-step cross-dissolve formula</span>
+              </div>
+
+              <div class="cmp-blend-inspect">
+                <div class="cmp-color-node">
+                  <span class="cmp-node-label">Source (S)</span>
+                  <div class="cmp-swatch" id="cmpSrcSwatch" style="background: #000;"></div>
+                  <div class="cmp-node-val" id="cmpSrcVal">Index: 10</div>
+                  <input type="range" id="cmpSrcSlider" min="0" max="255" value="10" class="cmp-slider">
+                </div>
+
+                <div class="cmp-blend-arrow">+</div>
+
+                <div class="cmp-color-node">
+                  <span class="cmp-node-label">Dest (D)</span>
+                  <div class="cmp-swatch" id="cmpDstSwatch" style="background: #000;"></div>
+                  <div class="cmp-node-val" id="cmpDstVal">Index: 50</div>
+                  <input type="range" id="cmpDstSlider" min="0" max="255" value="50" class="cmp-slider">
+                </div>
+
+                <div class="cmp-blend-arrow">➔</div>
+
+                <div class="cmp-color-node highlight">
+                  <span class="cmp-node-label">Blend Step 1</span>
+                  <div class="cmp-swatch" id="cmpResSwatch" style="background: #000;"></div>
+                  <div class="cmp-node-val" id="cmpResVal">Index: 69</div>
+                  <span class="cmp-step-tag">CMP Result</span>
+                </div>
+              </div>
+
+              <div class="cmp-fade-preview-box">
+                <div class="cmp-fade-title">Engine 3-Step Dissolve (Start S ➔ Step 1 ➔ Step 2 ➔ Dest D)</div>
+                <div class="cmp-fade-steps">
+                  <div class="cmp-fade-box" id="fadeStep0"><span class="box-label">S</span></div>
+                  <span class="fade-arrow">➔</span>
+                  <div class="cmp-fade-box" id="fadeStep1"><span class="box-label">1</span></div>
+                  <span class="fade-arrow">➔</span>
+                  <div class="cmp-fade-box" id="fadeStep2"><span class="box-label">2</span></div>
+                  <span class="fade-arrow">➔</span>
+                  <div class="cmp-fade-box" id="fadeStep3"><span class="box-label">D</span></div>
+                </div>
+                <div style="display:flex; gap:10px; align-items:center; margin-top:6px;">
+                  <button id="cmpPlayFadeBtn" class="btn btn-secondary btn-sm" style="font-size:0.76rem; padding: 4px 10px;">
+                    <span>▶ Play Dissolve Animation</span>
+                  </button>
+                  <div id="fadeLiveBox" style="width:24px; height:24px; border-radius:4px; border:1px solid rgba(255,255,255,0.3); background:#000;" title="Live fade preview"></div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Fetch uncompressed binary table
+    let tableBytes = null;
+    try {
+      const resp = await fetch(exportBinUrl);
+      const buf = await resp.arrayBuffer();
+      tableBytes = new Uint8Array(buf);
+    } catch (e) {
+      console.warn('Could not fetch uncompressed CMP buffer:', e);
+    }
+
+    // Palette lookup
+    const palette = (details.full_palette && details.full_palette.length >= 256)
+      ? details.full_palette
+      : Array.from({ length: 256 }, (_, i) => [i, i, i]);
+
+    function getColorRgb(idx) {
+      const c = palette[idx % 256] || [0, 0, 0];
+      return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+    }
+
+    // Blend Simulator elements
+    const srcSlider = document.getElementById('cmpSrcSlider');
+    const dstSlider = document.getElementById('cmpDstSlider');
+    const srcVal = document.getElementById('cmpSrcVal');
+    const dstVal = document.getElementById('cmpDstVal');
+    const resVal = document.getElementById('cmpResVal');
+    const srcSwatch = document.getElementById('cmpSrcSwatch');
+    const dstSwatch = document.getElementById('cmpDstSwatch');
+    const resSwatch = document.getElementById('cmpResSwatch');
+
+    const fadeStep0 = document.getElementById('fadeStep0');
+    const fadeStep1 = document.getElementById('fadeStep1');
+    const fadeStep2 = document.getElementById('fadeStep2');
+    const fadeStep3 = document.getElementById('fadeStep3');
+    const fadeLiveBox = document.getElementById('fadeLiveBox');
+    const playFadeBtn = document.getElementById('cmpPlayFadeBtn');
+
+    function updateSimulation(s, d) {
+      s = Math.max(0, Math.min(255, Math.round(s)));
+      d = Math.max(0, Math.min(255, Math.round(d)));
+
+      if (srcSlider && document.activeElement !== srcSlider) srcSlider.value = s;
+      if (dstSlider && document.activeElement !== dstSlider) dstSlider.value = d;
+
+      if (srcVal) srcVal.textContent = `Index: ${s}`;
+      if (dstVal) dstVal.textContent = `Index: ${d}`;
+
+      const sColor = getColorRgb(s);
+      const dColor = getColorRgb(d);
+
+      if (srcSwatch) srcSwatch.style.background = sColor;
+      if (dstSwatch) dstSwatch.style.background = dColor;
+
+      let step1 = d, step2 = d, step3 = d;
+      if (tableBytes && tableBytes.length >= 65532) {
+        step1 = tableBytes[(s << 8) + d] || 0;
+        step2 = tableBytes[(step1 << 8) + d] || 0;
+        step3 = tableBytes[(step2 << 8) + d] || 0;
+      }
+
+      const resColor = getColorRgb(step1);
+      if (resSwatch) resSwatch.style.background = resColor;
+      if (resVal) resVal.textContent = `Index: ${step1}`;
+
+      const step2Color = getColorRgb(step2);
+
+      if (fadeStep0) fadeStep0.style.background = sColor;
+      if (fadeStep1) fadeStep1.style.background = resColor;
+      if (fadeStep2) fadeStep2.style.background = step2Color;
+      if (fadeStep3) fadeStep3.style.background = dColor;
+      if (fadeLiveBox) fadeLiveBox.style.background = sColor;
+    }
+
+    if (srcSlider) {
+      srcSlider.addEventListener('input', () => {
+        updateSimulation(parseInt(srcSlider.value) || 0, parseInt(dstSlider.value) || 0);
+      });
+    }
+
+    if (dstSlider) {
+      dstSlider.addEventListener('input', () => {
+        updateSimulation(parseInt(srcSlider.value) || 0, parseInt(dstSlider.value) || 0);
+      });
+    }
+
+    // Play dissolve animation
+    let fadeAnimTimer = null;
+    if (playFadeBtn) {
+      playFadeBtn.addEventListener('click', () => {
+        if (fadeAnimTimer) clearInterval(fadeAnimTimer);
+        const s = parseInt(srcSlider ? srcSlider.value : 10) || 10;
+        const d = parseInt(dstSlider ? dstSlider.value : 50) || 50;
+        let step1 = d, step2 = d;
+        if (tableBytes && tableBytes.length >= 65532) {
+          step1 = tableBytes[(s << 8) + d] || 0;
+          step2 = tableBytes[(step1 << 8) + d] || 0;
+        }
+        const colors = [getColorRgb(s), getColorRgb(step1), getColorRgb(step2), getColorRgb(d)];
+        let fIdx = 0;
+        if (fadeLiveBox) fadeLiveBox.style.background = colors[0];
+        fadeAnimTimer = setInterval(() => {
+          fIdx++;
+          if (fIdx < colors.length) {
+            if (fadeLiveBox) fadeLiveBox.style.background = colors[fIdx];
+          } else {
+            clearInterval(fadeAnimTimer);
+            fadeAnimTimer = null;
+          }
+        }, 180);
+      });
+    }
+
+    // Initial update with default values 10 and 50
+    updateSimulation(10, 50);
   }
 
   // 2. Model & Character Viewer (.SHP)
@@ -675,7 +1869,7 @@
     state.modelCurrentFrame = 0;
     state.modelPlaying = false;
 
-    const baseName = asset.name.replace('.SHP', '');
+    const baseName = asset.name.replace(/\.(SHP|CSH)$/i, '');
     const exportFrameUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${state.modelCurrentFrame}`;
     const exportSheetUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&sheet=1`;
 
@@ -688,18 +1882,28 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
         <span>Export Sprite Sheet (PNG)</span>
       </a>
+      ${asset.ext === '.CSH' ? `
+      <a href="/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&uncompressed=1" download="${baseName}.SHP" class="btn btn-secondary" title="Download Format 80 Uncompressed .SHP Sprite Archive">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        <span>Download Uncompressed (.SHP)</span>
+      </a>` : ''}
     `;
 
     el.viewerStage.innerHTML = `
-      <div class="image-viewport-wrap ${state.modelBackdrop}" id="modelWrap" style="padding: 30px; min-width: 240px; min-height: 240px;">
-        <img id="modelImg" src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=0" class="display-canvas" style="transform: scale(2.5);" alt="${asset.name}">
+      <div class="cps-viewport-stage" id="modelViewportStage">
+        <div class="cps-canvas-wrapper ${state.modelBackdrop || 'bg-checker'} ${state.scanlinesActive ? 'crt-overlay' : ''}" id="modelWrap" style="min-width: 120px; min-height: 120px;">
+          <img id="modelImg" src="/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=0" class="display-canvas" alt="${asset.name}">
+        </div>
       </div>
     `;
 
+    const maxModelFrameStr = `${numFrames} / ${numFrames}`;
     el.metaChips.innerHTML = `
-      <div class="meta-chip">Frames: <strong id="frameIndicator">1 / ${numFrames}</strong></div>
+      <div class="meta-chip meta-chip-counter">Frames: <strong id="frameIndicator" style="min-width: ${maxModelFrameStr.length}ch;">1 / ${numFrames}</strong></div>
       <div class="meta-chip">Max Frame Size: <strong>${details.max_width || 0}x${details.max_height || 0} px</strong></div>
-      <div class="meta-chip">Format: <strong>Westwood Compact Shape</strong></div>
+      <div class="meta-chip">Format: <strong>${asset.ext === '.CSH' ? 'Format 80 Compressed Shape' : 'Westwood Compact Shape'}</strong></div>
+      ${details.is_compressed ? `<div class="meta-chip">Compression: <strong>${escapeHtml(details.compression_type)} (${details.compression_ratio})</strong></div><div class="meta-chip">Uncompressed: <strong>${formatBytes(details.uncompressed_size)}</strong></div>` : ''}
+      <div class="meta-chip">File Size: <strong>${formatBytes(asset.size)}</strong></div>
     `;
 
     el.interactiveControls.innerHTML = `
@@ -719,6 +1923,18 @@
           <option value="24">24 FPS</option>
         </select>
 
+        <div class="ctrl-btn-group" title="Zoom Multiplier">
+          <button class="ctrl-btn ${state.modelZoomLevel === 'fit' ? 'active' : ''}" data-mzoom="fit" title="Fit to Preview Window">Fit</button>
+          <button class="ctrl-btn ${state.modelZoomLevel === 1 ? 'active' : ''}" data-mzoom="1" title="1x Native Size">1x</button>
+          <button class="ctrl-btn ${state.modelZoomLevel === 2 ? 'active' : ''}" data-mzoom="2" title="2x Scale">2x</button>
+          <button class="ctrl-btn ${state.modelZoomLevel === 3 ? 'active' : ''}" data-mzoom="3" title="3x Scale">3x</button>
+          <button class="ctrl-btn ${state.modelZoomLevel === 4 ? 'active' : ''}" data-mzoom="4" title="4x Scale">4x</button>
+        </div>
+
+        <button id="modelToggleCrtBtn" class="btn btn-secondary ${state.scanlinesActive ? 'active' : ''}" style="font-size: 0.78rem;">
+          <span>📺 CRT Scanlines</span>
+        </button>
+
         <div class="ctrl-btn-group" title="Backdrop Style">
           <button class="ctrl-btn ${state.modelBackdrop === 'bg-checker' ? 'active' : ''}" data-bg="bg-checker">Grid</button>
           <button class="ctrl-btn ${state.modelBackdrop === 'bg-dark' ? 'active' : ''}" data-bg="bg-dark">Dark</button>
@@ -728,11 +1944,83 @@
       </div>
     `;
 
-    // Model controls setup
     const modelImg = document.getElementById('modelImg');
     const modelScrubber = document.getElementById('modelScrubber');
     const frameIndicator = document.getElementById('frameIndicator');
     const exportCurFrameBtn = document.getElementById('exportCurFrameBtn');
+
+    function applyModelZoom(level, centerView = false) {
+      state.modelZoomLevel = level;
+      const img = document.getElementById('modelImg');
+      const wrap = document.getElementById('modelWrap');
+      if (!img || !wrap) return;
+
+      el.interactiveControls.querySelectorAll('[data-mzoom]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mzoom === String(level));
+      });
+
+      const baseW = img.naturalWidth || details.max_width || 120;
+      const baseH = img.naturalHeight || details.max_height || 120;
+      const aspect = baseW / baseH;
+
+      if (level === 'fit') {
+        const stage = el.viewerStage;
+        const padX = 52;
+        const padY = 52;
+        const availW = Math.max((stage ? stage.clientWidth : window.innerWidth) - padX, 100);
+        const availH = Math.max((stage ? stage.clientHeight : window.innerHeight) - padY, 100);
+
+        let fitW, fitH;
+        if (availW / availH > aspect) {
+          fitH = availH;
+          fitW = fitH * aspect;
+        } else {
+          fitW = availW;
+          fitH = fitW / aspect;
+        }
+
+        const roundedW = Math.round(fitW);
+        const roundedH = Math.round(fitH);
+        wrap.style.width = `${roundedW}px`;
+        wrap.style.height = `${roundedH}px`;
+        img.style.width = `${roundedW}px`;
+        img.style.height = `${roundedH}px`;
+        img.style.maxWidth = 'none';
+        img.style.maxHeight = 'none';
+      } else {
+        const mult = parseInt(level);
+        const w = baseW * mult;
+        const h = baseH * mult;
+        wrap.style.width = `${w}px`;
+        wrap.style.height = `${h}px`;
+        img.style.width = `${w}px`;
+        img.style.height = `${h}px`;
+        img.style.maxWidth = 'none';
+        img.style.maxHeight = 'none';
+      }
+
+      requestAnimationFrame(() => {
+        const stage = el.viewerStage;
+        if (stage) {
+          if (level === 'fit') {
+            stage.scrollLeft = 0;
+            stage.scrollTop = 0;
+          } else if (centerView) {
+            if (stage.scrollWidth > stage.clientWidth) {
+              stage.scrollLeft = (stage.scrollWidth - stage.clientWidth) / 2;
+            }
+            if (stage.scrollHeight > stage.clientHeight) {
+              stage.scrollTop = (stage.scrollHeight - stage.clientHeight) / 2;
+            }
+          }
+        }
+        updateViewportScrollState();
+      });
+    }
+
+    state.reapplyZoom = () => {
+      applyModelZoom(state.modelZoomLevel, false);
+    };
 
     // Preload model frames in memory
     const modelFrameCache = new Map();
@@ -755,6 +2043,11 @@
       exportCurFrameBtn.href = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${state.modelCurrentFrame}`;
       exportCurFrameBtn.download = `${baseName}_frame${state.modelCurrentFrame}.png`;
     }
+
+    modelImg.onload = () => {
+      applyModelZoom(state.modelZoomLevel, false);
+      updateViewportScrollState();
+    };
 
     document.getElementById('modelPlayBtn').addEventListener('click', (e) => {
       state.modelPlaying = !state.modelPlaying;
@@ -785,15 +2078,33 @@
       }
     });
 
+    // Zoom listeners
+    el.interactiveControls.querySelectorAll('[data-mzoom]').forEach(b => {
+      b.addEventListener('click', (e) => {
+        const targetZoom = e.target.dataset.mzoom === 'fit' ? 'fit' : parseInt(e.target.dataset.mzoom);
+        applyModelZoom(targetZoom, true);
+      });
+    });
+
+    document.getElementById('modelToggleCrtBtn').addEventListener('click', (e) => {
+      state.scanlinesActive = !state.scanlinesActive;
+      e.currentTarget.classList.toggle('active', state.scanlinesActive);
+      const wrap = document.getElementById('modelWrap');
+      if (wrap) wrap.classList.toggle('crt-overlay', state.scanlinesActive);
+    });
+
     // Backdrop selector
     el.interactiveControls.querySelectorAll('[data-bg]').forEach(btn => {
       btn.addEventListener('click', (e) => {
         state.modelBackdrop = e.target.dataset.bg;
         el.interactiveControls.querySelectorAll('[data-bg]').forEach(b => b.classList.remove('active'));
         e.target.classList.add('active');
-        document.getElementById('modelWrap').className = `image-viewport-wrap ${state.modelBackdrop}`;
+        const wrap = document.getElementById('modelWrap');
+        if (wrap) wrap.className = `cps-canvas-wrapper ${state.modelBackdrop} ${state.scanlinesActive ? 'crt-overlay' : ''}`;
       });
     });
+
+    applyModelZoom(state.modelZoomLevel, false);
   }
 
   // 3. Animation Viewer (.WSA)
@@ -802,8 +2113,48 @@
     const width = details.width || 320;
     const height = details.height || 200;
     const sheetCols = details.sheet_cols || Math.min(numFrames, 8);
+    const isFullScreen = (width === 320 && height === 200);
+    const posX = details.pos_x || 0;
+    const posY = details.pos_y || 0;
+    const hasBg = !!details.has_bg;
+    const bgName = details.bg_name || '';
+
+    // Check localStorage for saved custom offset
+    const storageKey = `wsa_offset_${asset.pak_name}_${asset.name}`;
+    let savedPos = null;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) savedPos = JSON.parse(raw);
+    } catch (e) {}
+
+    let currentPosX = (savedPos && typeof savedPos.x === 'number') ? savedPos.x : posX;
+    let currentPosY = (savedPos && typeof savedPos.y === 'number') ? savedPos.y : posY;
+
+    // Reset runtime states
     state.animCurrentFrame = 0;
     state.animPlaying = false;
+    if (state.animTimer) clearInterval(state.animTimer);
+
+    // Initial backdrop & background state
+    if (hasBg && (state.animBackdrop === 'bg-scene' || state.animWithBg)) {
+      state.animWithBg = true;
+      state.animBackdrop = 'bg-scene';
+    } else {
+      state.animWithBg = false;
+      if (state.animBackdrop === 'bg-scene') {
+        state.animBackdrop = 'bg-checker';
+      }
+    }
+
+    // Initial canvas sizing depends on scene mode for sub-rect overlays
+    if (isFullScreen) {
+      state.animSceneMode = 'crop';
+    } else if (state.animWithBg && hasBg) {
+      state.animSceneMode = 'scene';
+    }
+    const sceneH = state.cropBottomPanel ? 144 : 200;
+    const initW = (state.animSceneMode === 'scene' && !isFullScreen) ? 320 : width;
+    const initH = (state.animSceneMode === 'scene' && !isFullScreen) ? sceneH : height;
 
     const baseName = asset.name.replace('.WSA', '');
     const exportFrameUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${state.animCurrentFrame}`;
@@ -819,22 +2170,63 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
         <span>Export Sheet</span>
       </a>
-      <a href="${exportGifUrl}" download="${baseName}.gif" class="btn btn-primary glow-btn">
+      <a id="exportGifBtn" href="${exportGifUrl}" download="${baseName}.gif" class="btn btn-primary glow-btn">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
         <span>Export Animated GIF</span>
       </a>
     `;
 
+    const wrapBgClass = (state.animBackdrop === 'bg-scene') ? 'bg-checker' : (state.animBackdrop || 'bg-checker');
     el.viewerStage.innerHTML = `
-      <div class="image-viewport-wrap bg-checker" id="animWrap" style="padding: 24px; margin: auto; min-width: 240px; min-height: 240px;">
-        <canvas id="animCanvas" width="${width}" height="${height}" class="display-canvas" style="transform: scale(2); image-rendering: pixelated;" alt="${asset.name}"></canvas>
+      <div class="cps-viewport-stage" id="animViewportStage">
+        <div class="cps-canvas-wrapper ${wrapBgClass} ${state.scanlinesActive ? 'crt-overlay' : ''}" id="animWrap">
+          <canvas id="animCanvas" width="${initW}" height="${initH}" class="display-canvas" alt="${asset.name}"></canvas>
+        </div>
       </div>
     `;
 
+    const maxAnimFrameStr = `${numFrames} / ${numFrames}`;
+    const isCustomOffset = !isFullScreen && (currentPosX !== posX || currentPosY !== posY);
     el.metaChips.innerHTML = `
-      <div class="meta-chip">Total Frames: <strong id="animFrameInd">1 / ${numFrames}</strong></div>
-      <div class="meta-chip">Dimensions: <strong>${width}x${height} px</strong></div>
-      <div class="meta-chip">Scene Offset: <strong>(${details.pos_x || 0}, ${details.pos_y || 0})</strong></div>
+      <div class="meta-chip meta-chip-counter">Total Frames: <strong id="animFrameInd" style="min-width: ${maxAnimFrameStr.length}ch;">1 / ${numFrames}</strong></div>
+      <div class="meta-chip">Native Dimensions: <strong>${width}x${height} px</strong></div>
+      <div class="meta-chip" id="wsaOffsetChip">Scene Offset: <strong id="wsaOffsetDisplay">(${currentPosX}, ${currentPosY})</strong>${isCustomOffset ? ` <span style="opacity:0.7; font-size:0.75rem;">(Orig: ${posX}, ${posY})</span>` : ''}</div>
+      <div class="meta-chip">Type: <strong>${isFullScreen ? 'Full Scene Cinema (320x200)' : 'Scene Animation Overlay'}</strong></div>
+      ${hasBg ? `<div class="meta-chip" title="Matching Room Background from ${details.bg_pak || ''}">Room Background: <strong style="color: var(--accent-emerald-light);">${bgName}</strong></div>` : ''}
+      <div class="meta-chip">Format: <strong>Format 80 + 40 Delta</strong></div>
+    `;
+
+    const sceneModeToggleHtml = !isFullScreen ? `
+      <div class="ctrl-btn-group" title="Frame Mode">
+        <button class="ctrl-btn ${state.animSceneMode === 'crop' ? 'active' : ''}" id="animCropBtn" title="Crop tightly to animation bounds (${width}x${height})">Crop (${width}x${height})</button>
+        <button class="ctrl-btn ${state.animSceneMode === 'scene' ? 'active' : ''}" id="animSceneBtn" title="Display in full ${state.cropBottomPanel ? '320x144' : '320x200'} room scene">${state.cropBottomPanel ? '320x144' : '320x200'} Scene</button>
+      </div>
+    ` : '';
+
+    const posControlHtml = !isFullScreen ? `
+      <div class="wsa-pos-control" id="wsaPosControl" title="Move WSA overlay on room scene (drag on canvas or adjust X/Y coordinates)">
+        <span class="wsa-pos-label">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="5 9 2 12 5 15"></polyline><polyline points="9 5 12 2 15 5"></polyline><polyline points="19 9 22 12 19 15"></polyline><polyline points="9 19 12 22 15 19"></polyline><line x1="2" y1="12" x2="22" y2="12"></line><line x1="12" y1="2" x2="12" y2="22"></line></svg>
+          Overlay Pos
+        </span>
+        <label class="wsa-pos-coord" title="Horizontal position in pixels">
+          <span>X</span>
+          <input type="number" id="wsaPosXInput" class="wsa-coord-input" value="${currentPosX}" step="1">
+        </label>
+        <label class="wsa-pos-coord" title="Vertical position in pixels">
+          <span>Y</span>
+          <input type="number" id="wsaPosYInput" class="wsa-coord-input" value="${currentPosY}" step="1">
+        </label>
+        <button id="wsaResetPosBtn" class="wsa-pos-reset-btn" title="Reset to original file offset (${posX}, ${posY})">Reset</button>
+        <span class="wsa-pos-hint" title="You can also click and drag the animation overlay directly on the canvas">💡 Drag on canvas</span>
+      </div>
+    ` : '';
+
+    const cropPanelCheckboxHtml = `
+      <label class="ctrl-checkbox-label" title="Remove the bottom 56px interface panel in scene mode (crops from 320x200 down to 320x144 scene viewport)">
+        <input type="checkbox" id="animCropPanelCheck" ${state.cropBottomPanel ? 'checked' : ''}>
+        <span class="checkbox-text">Remove Bottom Panel</span>
+      </label>
     `;
 
     el.interactiveControls.innerHTML = `
@@ -855,14 +2247,127 @@
           <option value="16">16 FPS</option>
           <option value="24">24 FPS</option>
         </select>
+
+        <div class="ctrl-btn-group" title="Zoom Multiplier">
+          <button class="ctrl-btn ${state.animZoomLevel === 'fit' ? 'active' : ''}" data-azoom="fit" title="Fit to Preview Window (Zero Clipping)">Fit</button>
+          <button class="ctrl-btn ${state.animZoomLevel === 1 ? 'active' : ''}" data-azoom="1" title="1x Native Size">1x</button>
+          <button class="ctrl-btn ${state.animZoomLevel === 2 ? 'active' : ''}" data-azoom="2" title="2x Scale">2x</button>
+          <button class="ctrl-btn ${state.animZoomLevel === 3 ? 'active' : ''}" data-azoom="3" title="3x Scale">3x</button>
+          <button class="ctrl-btn ${state.animZoomLevel === 4 ? 'active' : ''}" data-azoom="4" title="4x Scale">4x</button>
+        </div>
+
+        <button id="animToggleCrtBtn" class="btn btn-secondary ${state.scanlinesActive ? 'active' : ''}" style="font-size: 0.78rem;">
+          <span>📺 CRT Scanlines</span>
+        </button>
+
+        <div class="ctrl-btn-group" title="Backdrop Style">
+          <button class="ctrl-btn ${state.animWithBg ? 'active' : ''} ${!hasBg ? 'disabled' : ''}" data-abg="bg-scene" ${!hasBg ? 'disabled' : ''} title="${hasBg ? `Composite animation over room background (${bgName})` : 'No matching room background found'}">Scene Background</button>
+          <button class="ctrl-btn ${(!state.animWithBg && state.animBackdrop === 'bg-checker') ? 'active' : ''}" data-abg="bg-checker" title="Checkerboard grid transparency backdrop">Grid</button>
+          <button class="ctrl-btn ${(!state.animWithBg && state.animBackdrop === 'bg-dark') ? 'active' : ''}" data-abg="bg-dark" title="Dark charcoal backdrop">Dark</button>
+          <button class="ctrl-btn ${(!state.animWithBg && state.animBackdrop === 'bg-light') ? 'active' : ''}" data-abg="bg-light" title="Light grey backdrop">Light</button>
+          <button class="ctrl-btn ${(!state.animWithBg && state.animBackdrop === 'bg-chroma') ? 'active' : ''}" data-abg="bg-chroma" title="Chroma green backdrop">Green</button>
+        </div>
+
+        ${cropPanelCheckboxHtml}
+
+        ${sceneModeToggleHtml}
+
+        ${posControlHtml}
       </div>
     `;
 
     const canvas = document.getElementById('animCanvas');
-    const ctx = canvas ? canvas.getContext('2d') : null;
     const animScrubber = document.getElementById('animScrubber');
     const animFrameInd = document.getElementById('animFrameInd');
     const exportAnimFrameBtn = document.getElementById('exportAnimFrameBtn');
+
+    function applyAnimZoom(level, centerView = false) {
+      state.animZoomLevel = level;
+      const targetCanvas = document.getElementById('animCanvas');
+      const wrap = document.getElementById('animWrap');
+      if (!targetCanvas || !wrap) return;
+
+      el.interactiveControls.querySelectorAll('[data-azoom]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.azoom === String(level));
+      });
+
+      const targetW = targetCanvas.width;
+      const targetH = targetCanvas.height;
+      const aspect = targetW / targetH;
+
+      if (level === 'fit') {
+        const stage = el.viewerStage;
+        const padX = 52;
+        const padY = 52;
+        const availW = Math.max((stage ? stage.clientWidth : window.innerWidth) - padX, 100);
+        const availH = Math.max((stage ? stage.clientHeight : window.innerHeight) - padY, 100);
+
+        let fitW, fitH;
+        if (availW / availH > aspect) {
+          fitH = availH;
+          fitW = fitH * aspect;
+        } else {
+          fitW = availW;
+          fitH = fitW / aspect;
+        }
+
+        const roundedW = Math.round(fitW);
+        const roundedH = Math.round(fitH);
+        wrap.style.width = `${roundedW}px`;
+        wrap.style.height = `${roundedH}px`;
+        targetCanvas.style.width = `${roundedW}px`;
+        targetCanvas.style.height = `${roundedH}px`;
+        targetCanvas.style.maxWidth = 'none';
+        targetCanvas.style.maxHeight = 'none';
+        targetCanvas.style.aspectRatio = `${targetW} / ${targetH}`;
+      } else {
+        const mult = parseInt(level);
+        const w = targetW * mult;
+        const h = targetH * mult;
+        wrap.style.width = `${w}px`;
+        wrap.style.height = `${h}px`;
+        targetCanvas.style.width = `${w}px`;
+        targetCanvas.style.height = `${h}px`;
+        targetCanvas.style.maxWidth = 'none';
+        targetCanvas.style.maxHeight = 'none';
+        targetCanvas.style.aspectRatio = `${targetW} / ${targetH}`;
+      }
+
+      requestAnimationFrame(() => {
+        const stage = el.viewerStage;
+        if (stage) {
+          if (level === 'fit') {
+            stage.scrollLeft = 0;
+            stage.scrollTop = 0;
+          } else if (centerView) {
+            if (stage.scrollWidth > stage.clientWidth) {
+              stage.scrollLeft = (stage.scrollWidth - stage.clientWidth) / 2;
+            }
+            if (stage.scrollHeight > stage.clientHeight) {
+              stage.scrollTop = (stage.scrollHeight - stage.clientHeight) / 2;
+            }
+          }
+        }
+        updateViewportScrollState();
+      });
+    }
+
+    state.reapplyZoom = () => {
+      applyAnimZoom(state.animZoomLevel, false);
+    };
+
+    // Preload background if available
+    const bgImg = new Image();
+    let bgReady = false;
+    if (hasBg) {
+      bgImg.onload = () => {
+        bgReady = true;
+        if (state.animWithBg) {
+          drawAnimFrame(state.animCurrentFrame);
+        }
+      };
+      bgImg.src = `/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&bg=1`;
+    }
 
     // Preload spritesheet for instant 60fps zero-network playback
     const sheetImg = new Image();
@@ -888,35 +2393,130 @@
       img.src = `/api/asset/preview?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${idx}`;
     }
 
-    // Initial render of frame 0
-    getFallbackFrame(0, (img) => {
-      if (!sheetReady && ctx) {
-        ctx.clearRect(0, 0, width, height);
-        ctx.drawImage(img, 0, 0, width, height);
+    function updateExportUrls() {
+      const withBgActive = (state.animWithBg && hasBg);
+      const isScene = (state.animSceneMode === 'scene' && !isFullScreen);
+      const withBgParam = withBgActive ? '&with_bg=1' : '';
+      const fullSceneParam = isScene ? '&full_scene=1' : '';
+      const cropPanelParam = (isScene && state.cropBottomPanel) ? '&crop_panel=1' : '';
+      const posParam = !isFullScreen ? `&pos_x=${currentPosX}&pos_y=${currentPosY}` : '';
+
+      exportAnimFrameBtn.href = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${state.animCurrentFrame}${withBgParam}${fullSceneParam}${cropPanelParam}${posParam}`;
+      exportAnimFrameBtn.download = `${baseName}_frame${state.animCurrentFrame}${withBgActive ? '_bg' : ''}${cropPanelParam ? '_scene' : ''}.png`;
+
+      const exportGifBtn = document.getElementById('exportGifBtn');
+      if (exportGifBtn) {
+        exportGifBtn.href = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&gif=1${withBgParam}${fullSceneParam}${cropPanelParam}${posParam}`;
+        exportGifBtn.download = `${baseName}${withBgActive ? '_bg' : ''}${cropPanelParam ? '_scene' : ''}.gif`;
       }
-    });
+    }
 
     function drawAnimFrame(idx) {
       state.animCurrentFrame = (idx + numFrames) % numFrames;
       animScrubber.value = state.animCurrentFrame;
       animFrameInd.textContent = `${state.animCurrentFrame + 1} / ${numFrames}`;
-      exportAnimFrameBtn.href = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&frame=${state.animCurrentFrame}`;
-      exportAnimFrameBtn.download = `${baseName}_frame${state.animCurrentFrame}.png`;
+      updateExportUrls();
 
+      const targetCanvas = document.getElementById('animCanvas');
+      if (!targetCanvas) return;
+      const ctx = targetCanvas.getContext('2d');
       if (!ctx) return;
+
+      const inSceneMode = state.animSceneMode === 'scene' && !isFullScreen;
+      const dstX = inSceneMode ? currentPosX : 0;
+      const dstY = inSceneMode ? currentPosY : 0;
+
+      function renderToCanvas(srcImage, srcX, srcY, srcW, srcH) {
+        ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+
+        // Draw background if active and loaded
+        if (state.animWithBg && hasBg && bgReady) {
+          if (inSceneMode) {
+            const sceneH = state.cropBottomPanel ? 144 : 200;
+            ctx.drawImage(bgImg, 0, 0, 320, sceneH, 0, 0, 320, sceneH);
+          } else {
+            // Cropped mode: draw slice of background matching animation bounds
+            const srcBgX = Math.max(0, Math.min(320, currentPosX));
+            const srcBgY = Math.max(0, Math.min(200, currentPosY));
+            const srcBgW = Math.max(0, Math.min(320 - srcBgX, width));
+            const srcBgH = Math.max(0, Math.min(200 - srcBgY, height));
+            const dstBgX = srcBgX - currentPosX;
+            const dstBgY = srcBgY - currentPosY;
+            if (srcBgW > 0 && srcBgH > 0) {
+              ctx.drawImage(bgImg, srcBgX, srcBgY, srcBgW, srcBgH, dstBgX, dstBgY, srcBgW, srcBgH);
+            }
+          }
+        }
+
+        ctx.drawImage(srcImage, srcX, srcY, srcW, srcH, dstX, dstY, width, height);
+
+        if (inSceneMode) {
+          const showOutline = (!state.animWithBg || !hasBg) || isHoveringOverlay || isDragging;
+          if (showOutline) {
+            ctx.save();
+            ctx.strokeStyle = isDragging ? '#38bdf8' : (isHoveringOverlay ? 'rgba(56, 189, 248, 0.9)' : 'rgba(56, 189, 248, 0.6)');
+            ctx.lineWidth = 1;
+            ctx.setLineDash(isDragging ? [4, 2] : [3, 2]);
+            ctx.strokeRect(dstX + 0.5, dstY + 0.5, width - 1, height - 1);
+            ctx.restore();
+          }
+        }
+      }
+
       if (sheetReady) {
         const c = state.animCurrentFrame % sheetCols;
         const r = Math.floor(state.animCurrentFrame / sheetCols);
-        ctx.clearRect(0, 0, width, height);
-        ctx.drawImage(sheetImg, c * width, r * height, width, height, 0, 0, width, height);
+        renderToCanvas(sheetImg, c * width, r * height, width, height);
       } else {
         getFallbackFrame(state.animCurrentFrame, (img) => {
-          if (!sheetReady && ctx) {
-            ctx.clearRect(0, 0, width, height);
-            ctx.drawImage(img, 0, 0, width, height);
+          if (!sheetReady) {
+            renderToCanvas(img, 0, 0, width, height);
           }
         });
       }
+    }
+
+    // Initial frame 0 render
+    getFallbackFrame(0, (img) => {
+      if (!sheetReady) {
+        drawAnimFrame(0);
+      }
+    });
+
+    function setAnimSceneMode(mode) {
+      state.animSceneMode = mode;
+      const targetCanvas = document.getElementById('animCanvas');
+      if (!targetCanvas) return;
+
+      const isScene = (mode === 'scene' && !isFullScreen);
+      const sceneH = state.cropBottomPanel ? 144 : 200;
+
+      if (isScene) {
+        targetCanvas.width = 320;
+        targetCanvas.height = sceneH;
+      } else {
+        targetCanvas.width = width;
+        targetCanvas.height = height;
+      }
+
+      const cropBtn = document.getElementById('animCropBtn');
+      const sceneBtn = document.getElementById('animSceneBtn');
+      if (cropBtn) cropBtn.classList.toggle('active', mode === 'crop');
+      if (sceneBtn) {
+        sceneBtn.classList.toggle('active', mode === 'scene');
+        sceneBtn.textContent = `${state.cropBottomPanel ? '320x144' : '320x200'} Scene`;
+      }
+
+      applyAnimZoom(state.animZoomLevel || 'fit', false);
+      updateExportUrls();
+      drawAnimFrame(state.animCurrentFrame);
+    }
+
+    if (!isFullScreen) {
+      const cropBtn = document.getElementById('animCropBtn');
+      const sceneBtn = document.getElementById('animSceneBtn');
+      if (cropBtn) cropBtn.addEventListener('click', () => setAnimSceneMode('crop'));
+      if (sceneBtn) sceneBtn.addEventListener('click', () => setAnimSceneMode('scene'));
     }
 
     function startAnimPlayback() {
@@ -949,6 +2549,254 @@
         startAnimPlayback();
       }
     });
+
+    // Zoom listeners
+    el.interactiveControls.querySelectorAll('[data-azoom]').forEach(b => {
+      b.addEventListener('click', (e) => {
+        const targetZoom = e.target.dataset.azoom === 'fit' ? 'fit' : parseInt(e.target.dataset.azoom);
+        applyAnimZoom(targetZoom, true);
+      });
+    });
+
+    document.getElementById('animToggleCrtBtn').addEventListener('click', (e) => {
+      state.scanlinesActive = !state.scanlinesActive;
+      e.currentTarget.classList.toggle('active', state.scanlinesActive);
+      const wrap = document.getElementById('animWrap');
+      if (wrap) wrap.classList.toggle('crt-overlay', state.scanlinesActive);
+    });
+
+    // Backdrop selector (Scene Background, Grid, Dark, Light, Green)
+    el.interactiveControls.querySelectorAll('[data-abg]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const bgVal = e.currentTarget.dataset.abg;
+        if (bgVal === 'bg-scene') {
+          if (!hasBg) return;
+          state.animWithBg = true;
+          state.animBackdrop = 'bg-scene';
+          const wrap = document.getElementById('animWrap');
+          if (wrap) wrap.className = `cps-canvas-wrapper bg-checker ${state.scanlinesActive ? 'crt-overlay' : ''}`;
+          if (!isFullScreen && state.animSceneMode !== 'scene') {
+            setAnimSceneMode('scene');
+          }
+        } else {
+          state.animWithBg = false;
+          state.animBackdrop = bgVal;
+          const wrap = document.getElementById('animWrap');
+          if (wrap) wrap.className = `cps-canvas-wrapper ${state.animBackdrop} ${state.scanlinesActive ? 'crt-overlay' : ''}`;
+        }
+
+        el.interactiveControls.querySelectorAll('[data-abg]').forEach(b => {
+          if (b.dataset.abg === 'bg-scene') {
+            b.classList.toggle('active', state.animWithBg);
+          } else {
+            b.classList.toggle('active', !state.animWithBg && state.animBackdrop === b.dataset.abg);
+          }
+        });
+
+        updateExportUrls();
+        drawAnimFrame(state.animCurrentFrame);
+      });
+    });
+
+    // Crop Bottom Panel checkbox listener
+    const animCropPanelCheck = document.getElementById('animCropPanelCheck');
+    if (animCropPanelCheck) {
+      animCropPanelCheck.addEventListener('change', (e) => {
+        state.cropBottomPanel = e.target.checked;
+        setAnimSceneMode(state.animSceneMode);
+      });
+    }
+
+    // WSA Overlay Position Dragging & Controls
+    let isDragging = false;
+    let dragGrabOffsetX = 0;
+    let dragGrabOffsetY = 0;
+    let isHoveringOverlay = false;
+
+    function getCanvasCoords(clientX, clientY) {
+      const targetCanvas = document.getElementById('animCanvas');
+      if (!targetCanvas) return { x: 0, y: 0 };
+      const rect = targetCanvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return { x: 0, y: 0 };
+      const scaleX = targetCanvas.width / rect.width;
+      const scaleY = targetCanvas.height / rect.height;
+      return {
+        x: (clientX - rect.left) * scaleX,
+        y: (clientY - rect.top) * scaleY
+      };
+    }
+
+    function isPointInOverlay(cx, cy) {
+      const inSceneMode = state.animSceneMode === 'scene' && !isFullScreen;
+      if (inSceneMode) {
+        return cx >= currentPosX && cx <= currentPosX + width &&
+               cy >= currentPosY && cy <= currentPosY + height;
+      }
+      return cx >= 0 && cx <= width && cy >= 0 && cy <= height;
+    }
+
+    function updatePos(newX, newY, save = true) {
+      currentPosX = Math.round(newX);
+      currentPosY = Math.round(newY);
+
+      const posXInput = document.getElementById('wsaPosXInput');
+      const posYInput = document.getElementById('wsaPosYInput');
+      const offsetDisplay = document.getElementById('wsaOffsetDisplay');
+      const offsetChip = document.getElementById('wsaOffsetChip');
+
+      if (posXInput && document.activeElement !== posXInput) posXInput.value = currentPosX;
+      if (posYInput && document.activeElement !== posYInput) posYInput.value = currentPosY;
+      if (offsetDisplay) offsetDisplay.textContent = `(${currentPosX}, ${currentPosY})`;
+      if (offsetChip) {
+        const isCustom = (currentPosX !== posX || currentPosY !== posY);
+        offsetChip.innerHTML = `Scene Offset: <strong id="wsaOffsetDisplay">(${currentPosX}, ${currentPosY})</strong>${isCustom ? ` <span style="opacity:0.7; font-size:0.75rem;">(Orig: ${posX}, ${posY})</span>` : ''}`;
+      }
+
+      if (save) {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify({ x: currentPosX, y: currentPosY }));
+        } catch (e) {}
+      }
+
+      updateExportUrls();
+      drawAnimFrame(state.animCurrentFrame);
+    }
+
+    if (!isFullScreen && canvas) {
+      canvas.addEventListener('mousemove', (e) => {
+        if (isDragging) return;
+        const { x, y } = getCanvasCoords(e.clientX, e.clientY);
+        const over = isPointInOverlay(x, y);
+        if (over !== isHoveringOverlay) {
+          isHoveringOverlay = over;
+          drawAnimFrame(state.animCurrentFrame);
+        }
+        const inSceneMode = state.animSceneMode === 'scene';
+        if (inSceneMode) {
+          canvas.style.cursor = over ? 'grab' : 'crosshair';
+        } else {
+          canvas.style.cursor = 'default';
+        }
+      });
+
+      canvas.addEventListener('mouseleave', () => {
+        if (isHoveringOverlay && !isDragging) {
+          isHoveringOverlay = false;
+          drawAnimFrame(state.animCurrentFrame);
+        }
+      });
+
+      function onWindowMouseMove(e) {
+        if (!isDragging) return;
+        const { x, y } = getCanvasCoords(e.clientX, e.clientY);
+        updatePos(x - dragGrabOffsetX, y - dragGrabOffsetY, false);
+      }
+
+      function onWindowMouseUp(e) {
+        if (!isDragging) return;
+        isDragging = false;
+        window.removeEventListener('mousemove', onWindowMouseMove);
+        window.removeEventListener('mouseup', onWindowMouseUp);
+        const { x, y } = getCanvasCoords(e.clientX, e.clientY);
+        updatePos(x - dragGrabOffsetX, y - dragGrabOffsetY, true);
+        const inSceneMode = state.animSceneMode === 'scene';
+        if (inSceneMode) {
+          canvas.style.cursor = isPointInOverlay(x, y) ? 'grab' : 'crosshair';
+        } else {
+          canvas.style.cursor = 'default';
+        }
+      }
+
+      canvas.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        const inSceneMode = state.animSceneMode === 'scene';
+        if (!inSceneMode) return;
+
+        const { x, y } = getCanvasCoords(e.clientX, e.clientY);
+        isDragging = true;
+        canvas.style.cursor = 'grabbing';
+
+        if (isPointInOverlay(x, y)) {
+          dragGrabOffsetX = x - currentPosX;
+          dragGrabOffsetY = y - currentPosY;
+        } else {
+          // Snap center to click location
+          dragGrabOffsetX = width / 2;
+          dragGrabOffsetY = height / 2;
+          updatePos(x - dragGrabOffsetX, y - dragGrabOffsetY, false);
+        }
+
+        window.addEventListener('mousemove', onWindowMouseMove);
+        window.addEventListener('mouseup', onWindowMouseUp);
+        e.preventDefault();
+      });
+
+      // Touch interaction
+      canvas.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) return;
+        const inSceneMode = state.animSceneMode === 'scene';
+        if (!inSceneMode) return;
+        const touch = e.touches[0];
+        const { x, y } = getCanvasCoords(touch.clientX, touch.clientY);
+        isDragging = true;
+        if (isPointInOverlay(x, y)) {
+          dragGrabOffsetX = x - currentPosX;
+          dragGrabOffsetY = y - currentPosY;
+        } else {
+          dragGrabOffsetX = width / 2;
+          dragGrabOffsetY = height / 2;
+          updatePos(x - dragGrabOffsetX, y - dragGrabOffsetY, false);
+        }
+        e.preventDefault();
+      }, { passive: false });
+
+      canvas.addEventListener('touchmove', (e) => {
+        if (!isDragging || e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        const { x, y } = getCanvasCoords(touch.clientX, touch.clientY);
+        updatePos(x - dragGrabOffsetX, y - dragGrabOffsetY, false);
+        e.preventDefault();
+      }, { passive: false });
+
+      canvas.addEventListener('touchend', (e) => {
+        if (!isDragging) return;
+        isDragging = false;
+        try {
+          localStorage.setItem(storageKey, JSON.stringify({ x: currentPosX, y: currentPosY }));
+        } catch (err) {}
+      });
+
+      // Pos Inputs and Reset button listeners
+      const posXInput = document.getElementById('wsaPosXInput');
+      const posYInput = document.getElementById('wsaPosYInput');
+      const resetBtn = document.getElementById('wsaResetPosBtn');
+
+      if (posXInput) {
+        posXInput.addEventListener('input', () => {
+          const val = parseInt(posXInput.value);
+          if (!isNaN(val)) updatePos(val, currentPosY, true);
+        });
+      }
+
+      if (posYInput) {
+        posYInput.addEventListener('input', () => {
+          const val = parseInt(posYInput.value);
+          if (!isNaN(val)) updatePos(currentPosX, val, true);
+        });
+      }
+
+      if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+          try {
+            localStorage.removeItem(storageKey);
+          } catch (err) {}
+          updatePos(posX, posY, false);
+        });
+      }
+    }
+
+    // Initial zoom application
+    applyAnimZoom(state.animZoomLevel || 'fit', false);
   }
 
   // 4. MIDI Soundtrack Viewer (.XMI)
@@ -980,10 +2828,12 @@
       </div>
     `;
 
+    const initialBpm = meta.tempo_bpm || 120;
     el.metaChips.innerHTML = `
       <div class="meta-chip">Total Notes: <strong>${meta.notes_count || 0}</strong></div>
       <div class="meta-chip">Channels Used: <strong>${(meta.channels_used || []).length} channels</strong></div>
       <div class="meta-chip">Est. Duration: <strong>${meta.estimated_seconds || 0}s</strong></div>
+      <div class="meta-chip" id="midiBpmChip">Tempo: <strong>${initialBpm} BPM</strong></div>
       <div class="meta-chip">PPQN: <strong>${meta.ppqn || 60}</strong></div>
     `;
 
@@ -994,29 +2844,109 @@
         </button>
         <span id="midiTimeText" style="font-family: var(--font-mono); font-size: 0.8rem; min-width: 80px;">0:00 / 0:00</span>
         <input type="range" class="scrubber-slider" id="midiScrubber" min="0" max="100" value="0">
+
+        <div class="bpm-control-wrap" title="Adjust playback speed using BPM">
+          <span class="bpm-label">BPM</span>
+          <button class="bpm-stepper-btn" id="bpmMinus5Btn" title="Decrease tempo by 5 BPM">-5</button>
+          <button class="bpm-stepper-btn" id="bpmMinusBtn" title="Decrease tempo by 1 BPM">-</button>
+          <input type="number" id="bpmInput" class="bpm-input" min="20" max="360" step="1" value="${initialBpm}" title="Playback speed (BPM)">
+          <button class="bpm-stepper-btn" id="bpmPlusBtn" title="Increase tempo by 1 BPM">+</button>
+          <button class="bpm-stepper-btn" id="bpmPlus5Btn" title="Increase tempo by 5 BPM">+5</button>
+          <span class="bpm-rate-badge" id="bpmRateBadge" title="Playback speed multiplier">1.00x</span>
+          <button class="bpm-reset-btn" id="bpmResetBtn" title="Reset tempo to original track BPM">Reset</button>
+        </div>
       </div>
     `;
+
+    const disc = document.getElementById('audioDisc');
+    const playBtn = document.getElementById('midiPlayBtn');
+    const timeText = document.getElementById('midiTimeText');
+    const scrubber = document.getElementById('midiScrubber');
+    const bpmInput = document.getElementById('bpmInput');
+    const bpmMinus5Btn = document.getElementById('bpmMinus5Btn');
+    const bpmMinusBtn = document.getElementById('bpmMinusBtn');
+    const bpmPlusBtn = document.getElementById('bpmPlusBtn');
+    const bpmPlus5Btn = document.getElementById('bpmPlus5Btn');
+    const bpmRateBadge = document.getElementById('bpmRateBadge');
+    const bpmResetBtn = document.getElementById('bpmResetBtn');
+    const bpmChip = document.getElementById('midiBpmChip');
+    const canvas = document.getElementById('audioCanvas');
+    const ctx = canvas.getContext('2d');
+    let isScrubbing = false;
+
+    function updateBpmUI(curBpm, baseBpm, rate) {
+      if (bpmInput && document.activeElement !== bpmInput) {
+        bpmInput.value = curBpm;
+      }
+      if (bpmRateBadge) {
+        bpmRateBadge.textContent = `${rate.toFixed(2)}x`;
+      }
+      if (bpmResetBtn) {
+        bpmResetBtn.textContent = curBpm !== baseBpm ? `Reset (${baseBpm})` : 'Reset';
+        bpmResetBtn.style.opacity = curBpm === baseBpm ? '0.5' : '1.0';
+      }
+      if (bpmChip) {
+        bpmChip.innerHTML = curBpm === baseBpm
+          ? `Tempo: <strong>${baseBpm} BPM</strong>`
+          : `Tempo: <strong>${curBpm} BPM</strong> <span style="opacity:0.75; font-size:0.75rem;">(${rate.toFixed(2)}x, base ${baseBpm})</span>`;
+      }
+    }
+
+    window.midiPlayer.onBpmChange = (curBpm, baseBpm, rate) => {
+      updateBpmUI(curBpm, baseBpm, rate);
+    };
 
     // Load MIDI arraybuffer into WebMidiPlayer
     try {
       const res = await fetch(midiUrl);
       const ab = await res.arrayBuffer();
       window.midiPlayer.loadMidi(ab);
+      updateBpmUI(window.midiPlayer.currentBpm, window.midiPlayer.baseBpm, window.midiPlayer.playbackRate);
     } catch (e) {
       console.error('Failed to load MIDI:', e);
     }
 
-    const disc = document.getElementById('audioDisc');
-    const playBtn = document.getElementById('midiPlayBtn');
-    const timeText = document.getElementById('midiTimeText');
-    const scrubber = document.getElementById('midiScrubber');
-    const canvas = document.getElementById('audioCanvas');
-    const ctx = canvas.getContext('2d');
-    const freqData = new Uint8Array(32);
+    bpmInput.addEventListener('change', (e) => {
+      const val = parseInt(e.target.value, 10);
+      if (!isNaN(val)) {
+        window.midiPlayer.setBpm(val);
+      }
+    });
 
+    bpmInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const val = parseInt(e.target.value, 10);
+        if (!isNaN(val)) {
+          window.midiPlayer.setBpm(val);
+        }
+        bpmInput.blur();
+      }
+    });
+
+    bpmMinus5Btn.addEventListener('click', () => {
+      window.midiPlayer.setBpm(window.midiPlayer.currentBpm - 5);
+    });
+
+    bpmMinusBtn.addEventListener('click', () => {
+      window.midiPlayer.setBpm(window.midiPlayer.currentBpm - 1);
+    });
+
+    bpmPlusBtn.addEventListener('click', () => {
+      window.midiPlayer.setBpm(window.midiPlayer.currentBpm + 1);
+    });
+
+    bpmPlus5Btn.addEventListener('click', () => {
+      window.midiPlayer.setBpm(window.midiPlayer.currentBpm + 5);
+    });
+
+    bpmResetBtn.addEventListener('click', () => {
+      window.midiPlayer.resetBpm();
+    });
     window.midiPlayer.onProgress = (cur, dur) => {
-      timeText.textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
-      scrubber.value = dur > 0 ? (cur / dur) * 100 : 0;
+      if (!isScrubbing) {
+        timeText.textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
+        scrubber.value = dur > 0 ? (cur / dur) * 100 : 0;
+      }
     };
 
     window.midiPlayer.onEnd = () => {
@@ -1026,7 +2956,7 @@
 
     playBtn.addEventListener('click', () => {
       if (window.midiPlayer.isPlaying) {
-        window.midiPlayer.stop();
+        window.midiPlayer.pause();
         disc.classList.remove('playing');
         playBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
       } else {
@@ -1037,9 +2967,16 @@
       }
     });
 
+    scrubber.addEventListener('input', (e) => {
+      isScrubbing = true;
+      const targetSec = (parseFloat(e.target.value) / 100) * window.midiPlayer.durationSec;
+      timeText.textContent = `${formatTime(targetSec)} / ${formatTime(window.midiPlayer.durationSec)}`;
+    });
+
     scrubber.addEventListener('change', (e) => {
       const targetSec = (parseFloat(e.target.value) / 100) * window.midiPlayer.durationSec;
       window.midiPlayer.seek(targetSec);
+      isScrubbing = false;
     });
 
     function startVisualizer() {
@@ -1080,12 +3017,34 @@
     `;
 
     el.viewerStage.innerHTML = `
-      <div class="audio-studio-wrap">
-        <div class="audio-disc-visualizer" style="border-color: var(--accent-rose);">
+      <div class="audio-studio-wrap voc-studio-wrap">
+        <div class="audio-disc-visualizer" id="vocDisc" style="border-color: var(--accent-rose);">
           <div class="disc-grooves"></div>
           <div class="disc-center" style="background: var(--accent-rose);">🔊</div>
         </div>
-        <audio controls src="${wavUrl}" style="width: 100%; max-width: 400px; margin-top: 20px;"></audio>
+
+        <div class="voc-custom-player">
+          <audio id="vocAudio" src="${wavUrl}" preload="auto"></audio>
+
+          <div class="voc-player-row">
+            <button class="voc-play-btn" id="vocPlayBtn" title="Play / Pause">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            </button>
+            <div class="voc-time" id="vocTimeText">0:00.0 / 0:00.0</div>
+            <div class="voc-spacer"></div>
+            <button class="voc-tool-btn" id="vocLoopBtn" title="Loop audio">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
+            </button>
+            <button class="voc-tool-btn" id="vocMuteBtn" title="Mute / Unmute">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+            </button>
+            <input type="range" class="voc-volume-slider" id="vocVolSlider" min="0" max="1" step="0.05" value="1" title="Volume">
+          </div>
+
+          <div class="voc-scrubber-container">
+            <input type="range" class="voc-scrubber" id="vocScrubber" min="0" max="100" value="0" step="0.1" title="Seek position">
+          </div>
+        </div>
       </div>
     `;
 
@@ -1095,6 +3054,87 @@
     `;
 
     el.interactiveControls.innerHTML = '';
+
+    const audio = document.getElementById('vocAudio');
+    const disc = document.getElementById('vocDisc');
+    const playBtn = document.getElementById('vocPlayBtn');
+    const timeText = document.getElementById('vocTimeText');
+    const scrubber = document.getElementById('vocScrubber');
+    const loopBtn = document.getElementById('vocLoopBtn');
+    const muteBtn = document.getElementById('vocMuteBtn');
+    const volSlider = document.getElementById('vocVolSlider');
+
+    function formatVocTime(sec) {
+      if (!isFinite(sec) || isNaN(sec)) sec = 0;
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      const ms = Math.floor((sec % 1) * 10);
+      return `${m}:${s.toString().padStart(2, '0')}.${ms}`;
+    }
+
+    function updatePlayState(playing) {
+      if (playing) {
+        disc.classList.add('playing');
+        playBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`;
+      } else {
+        disc.classList.remove('playing');
+        playBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
+      }
+    }
+
+    audio.addEventListener('loadedmetadata', () => {
+      timeText.textContent = `${formatVocTime(audio.currentTime)} / ${formatVocTime(audio.duration)}`;
+    });
+
+    audio.addEventListener('timeupdate', () => {
+      timeText.textContent = `${formatVocTime(audio.currentTime)} / ${formatVocTime(audio.duration)}`;
+      if (audio.duration > 0) {
+        scrubber.value = (audio.currentTime / audio.duration) * 100;
+      }
+    });
+
+    audio.addEventListener('play', () => updatePlayState(true));
+    audio.addEventListener('pause', () => updatePlayState(false));
+    audio.addEventListener('ended', () => {
+      if (!audio.loop) {
+        updatePlayState(false);
+        scrubber.value = 0;
+      }
+    });
+
+    playBtn.addEventListener('click', () => {
+      if (audio.paused) {
+        audio.play().catch(e => console.log('Audio playback prevented:', e));
+      } else {
+        audio.pause();
+      }
+    });
+
+    scrubber.addEventListener('input', (e) => {
+      if (audio.duration > 0) {
+        audio.currentTime = (parseFloat(e.target.value) / 100) * audio.duration;
+      }
+    });
+
+    loopBtn.addEventListener('click', () => {
+      audio.loop = !audio.loop;
+      loopBtn.classList.toggle('active', audio.loop);
+    });
+
+    volSlider.addEventListener('input', (e) => {
+      audio.volume = parseFloat(e.target.value);
+      audio.muted = (audio.volume === 0);
+      muteBtn.classList.toggle('active', audio.muted);
+    });
+
+    muteBtn.addEventListener('click', () => {
+      audio.muted = !audio.muted;
+      muteBtn.classList.toggle('active', audio.muted);
+      if (!audio.muted && audio.volume === 0) {
+        audio.volume = 0.5;
+        volSlider.value = 0.5;
+      }
+    });
   }
 
   // 6. Palette Viewer (.COL / .PAL)
@@ -1716,11 +3756,360 @@
     renderScriptContent();
   }
 
-  // 7. Westwood Engine Asset Inspector
+  // 8. Westwood .FNT Font Viewer
+  function renderFontViewer(asset, details) {
+    let currentScheme = 'gold';
+    let zoomLevel = 3;
+    let letterSpacing = 1;
+    let lineSpacing = 2;
+    let typedText = 'The Legend of Kyrandia\nBook Two: Hand of Fate';
+
+    const baseName = asset.name.replace(/\.FNT$/i, '');
+    const numGlyphs = details.num_glyphs || 255;
+    const glyphs = details.glyphs || [];
+    const glyphMap = new Map(glyphs.map(g => [g.index, g]));
+
+    const COLOR_PALETTES = {
+      gold: {
+        0: 'transparent',
+        1: '#f5d061',
+        2: '#e5a823',
+        3: '#7a4e08',
+        4: '#462a05',
+        5: '#fff0a0',
+        6: '#c89632',
+        7: '#a06e1e',
+        8: '#785014',
+        9: '#5a3c0f',
+        10: '#3c280a',
+        11: '#fffad2',
+        12: '#b48228',
+        13: '#8c5f19',
+        14: '#64410f',
+        15: '#ffffff'
+      },
+      white: {
+        0: 'transparent',
+        1: '#ffffff',
+        2: '#bec3cd',
+        3: '#232832',
+        4: '#4b505f',
+        5: '#e6ebf5',
+        6: '#a0a5af',
+        7: '#828791',
+        8: '#646973',
+        9: '#50555f',
+        10: '#323741',
+        11: '#fafaff',
+        12: '#b4b9c3',
+        13: '#8c919b',
+        14: '#6e737d',
+        15: '#ffffff'
+      },
+      amber: {
+        0: 'transparent',
+        1: '#fbbf24',
+        2: '#d97706',
+        3: '#451a03',
+        4: '#78350f',
+        5: '#fef3c7',
+        6: '#f59e0b',
+        7: '#b45309',
+        8: '#92400e',
+        9: '#6e300a',
+        10: '#502308',
+        11: '#fde68a',
+        12: '#c8640a',
+        13: '#a04b0a',
+        14: '#7d370a',
+        15: '#ffffff'
+      },
+      cyan: {
+        0: 'transparent',
+        1: '#38bdf8',
+        2: '#0ea5e9',
+        3: '#082f49',
+        4: '#0c4a60',
+        5: '#e0f2fe',
+        6: '#0284c7',
+        7: '#0369a1',
+        8: '#075985',
+        9: '#0e7490',
+        10: '#155e75',
+        11: '#bae6fd',
+        12: '#7dd3fc',
+        13: '#0ea5e9',
+        14: '#0369a1',
+        15: '#ffffff'
+      },
+      emerald: {
+        0: 'transparent',
+        1: '#34d399',
+        2: '#10b981',
+        3: '#064e3b',
+        4: '#047857',
+        5: '#d1fae5',
+        6: '#059669',
+        7: '#047857',
+        8: '#065f46',
+        9: '#064e3b',
+        10: '#022c22',
+        11: '#a7f3d0',
+        12: '#6ee7b7',
+        13: '#10b981',
+        14: '#059669',
+        15: '#ffffff'
+      }
+    };
+
+    function updateActionUrls() {
+      const exportSheetUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}&scheme=${currentScheme}`;
+      const exportRawUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}`;
+
+      el.viewerActions.innerHTML = `
+        <a id="exportFntSheetBtn" href="${exportSheetUrl}" download="${baseName}_fontsheet_${currentScheme}.png" class="btn btn-primary glow-btn" title="Export complete 16-column character sheet as PNG">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+          <span>Export Font Sheet (PNG)</span>
+        </a>
+        <a id="downloadRawFntBtn" href="${exportRawUrl}" download="${asset.name}" class="btn btn-secondary" title="Download original Westwood .FNT file">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          <span>Download .FNT File</span>
+        </a>
+      `;
+    }
+
+    updateActionUrls();
+
+    el.metaChips.innerHTML = `
+      <div class="meta-chip">Type: <strong>Westwood Font v3 (4bpp Bitmap)</strong></div>
+      <div class="meta-chip">Glyphs: <strong>${numGlyphs} characters</strong></div>
+      <div class="meta-chip">Max Size: <strong>${details.max_width || 0}×${details.max_height || 0} px</strong></div>
+      <div class="meta-chip">Archive: <strong>${escapeHtml(asset.pak_name)}</strong></div>
+      <div class="meta-chip">Size: <strong>${formatBytes(asset.size)}</strong></div>
+    `;
+
+    el.viewerStage.innerHTML = `
+      <div class="fnt-viewer-container">
+        <!-- Header Banner & Color Scheme Selector -->
+        <div class="fnt-header-card">
+          <div class="fnt-header-left">
+            <div class="fnt-header-icon">🔤</div>
+            <div class="fnt-header-titles">
+              <span class="fnt-header-title">${escapeHtml(asset.name)}</span>
+              <span class="fnt-header-sub">
+                <span>${numGlyphs} Bitmap Glyphs</span> •
+                <span>Max Bounding Box: ${details.max_width || 0}×${details.max_height || 0} px</span> •
+                <span>Variable Width</span>
+              </span>
+            </div>
+          </div>
+          <div class="fnt-scheme-selector">
+            <span class="fnt-scheme-label">Color:</span>
+            <button class="fnt-scheme-pill active" data-scheme="gold">🌟 Gold</button>
+            <button class="fnt-scheme-pill" data-scheme="white">⚪ White</button>
+            <button class="fnt-scheme-pill" data-scheme="amber">🟠 Amber</button>
+            <button class="fnt-scheme-pill" data-scheme="cyan">🔷 Cyan</button>
+            <button class="fnt-scheme-pill" data-scheme="emerald">🟢 Emerald</button>
+          </div>
+        </div>
+
+        <!-- Live Typing Sandbox -->
+        <div class="fnt-sandbox-panel">
+          <div class="fnt-sandbox-header">
+            <span style="font-weight: 700; color: #fff; font-size: 0.95rem;">✍️ Live Text Rendering Sandbox</span>
+            <div class="fnt-sandbox-presets">
+              <button class="fnt-preset-btn" data-preset="The Legend of Kyrandia\nBook Two: Hand of Fate">Game Title</button>
+              <button class="fnt-preset-btn" data-preset="Zanthia: The whole world is\ndisappearing piece by piece!\nMarko: Don't panic!">Dialogue</button>
+              <button class="fnt-preset-btn" data-preset="Frank Klepacki\n& Paul Mudra">Soundtrack</button>
+              <button class="fnt-preset-btn" data-preset="ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789 !?@#$%&*()">All Glyphs</button>
+              <button class="fnt-preset-btn" data-preset="Westwood Studios Presents\nA Masterpiece of Fantasy">Westwood</button>
+            </div>
+          </div>
+          <div class="fnt-sandbox-input-row">
+            <textarea class="fnt-sandbox-textarea" id="fntSandboxInput" rows="3" placeholder="Type text here (multiple lines supported, press Enter for new line)...">${escapeHtml(typedText)}</textarea>
+            <button id="fntExportTextBtn" class="btn btn-secondary" style="flex-shrink: 0;" title="Download rendered text as transparent PNG">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <span>Export Text (PNG)</span>
+            </button>
+          </div>
+          <div class="fnt-sandbox-stage" id="fntSandboxStage">
+            <canvas id="fntSandboxCanvas" class="fnt-sandbox-canvas"></canvas>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Interactive bottom controls
+    el.interactiveControls.innerHTML = `
+      <div class="player-controls-wrap">
+        <div class="ctrl-btn-group" title="Zoom Scale">
+          <button class="ctrl-btn ${zoomLevel === 1 ? 'active' : ''}" data-fzoom="1">1x</button>
+          <button class="ctrl-btn ${zoomLevel === 2 ? 'active' : ''}" data-fzoom="2">2x</button>
+          <button class="ctrl-btn ${zoomLevel === 3 ? 'active' : ''}" data-fzoom="3">3x</button>
+          <button class="ctrl-btn ${zoomLevel === 4 ? 'active' : ''}" data-fzoom="4">4x</button>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: #94a3b8;">
+          <span>Letter Spacing:</span>
+          <input type="range" id="fntTrackingSlider" min="-1" max="5" value="${letterSpacing}" style="width: 80px; accent-color: #f5d061; cursor: pointer;">
+          <span id="fntTrackingVal" style="font-family: var(--font-mono); color: #fff; min-width: 20px;">+${letterSpacing}px</span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: #94a3b8;">
+          <span>Line Spacing:</span>
+          <input type="range" id="fntLineSpacingSlider" min="0" max="10" value="${lineSpacing}" style="width: 80px; accent-color: #f5d061; cursor: pointer;">
+          <span id="fntLineSpacingVal" style="font-family: var(--font-mono); color: #fff; min-width: 20px;">+${lineSpacing}px</span>
+        </div>
+      </div>
+    `;
+
+    function renderSandbox() {
+      const canvas = document.getElementById('fntSandboxCanvas');
+      if (!canvas) return;
+
+      const text = typedText || '';
+      const palette = COLOR_PALETTES[currentScheme] || COLOR_PALETTES.gold;
+      const lines = text.split('\n');
+      const maxH = details.max_height || 10;
+      const maxW = details.max_width || 8;
+      const scale = zoomLevel;
+      const track = letterSpacing;
+      const lineH = maxH + lineSpacing;
+
+      let maxLineW = 0;
+      lines.forEach(line => {
+        let lw = 0;
+        for (let i = 0; i < line.length; i++) {
+          const c = line.charCodeAt(i);
+          const g = glyphMap.get(c);
+          if (g && g.width > 0) lw += g.width + track;
+          else if (line[i] === ' ') lw += Math.max(Math.floor(maxW / 2), 4) + track;
+          else lw += maxW + track;
+        }
+        if (lw > maxLineW) maxLineW = lw;
+      });
+
+      const totalW = Math.max(maxLineW, 10);
+      const totalH = Math.max(lines.length * lineH, 10);
+
+      canvas.width = totalW * scale;
+      canvas.height = totalH * scale;
+
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      let curY = 0;
+      lines.forEach(line => {
+        let curX = 0;
+        for (let i = 0; i < line.length; i++) {
+          const c = line.charCodeAt(i);
+          const g = glyphMap.get(c);
+          if (g && g.has_data) {
+            for (let y = 0; y < g.rows.length; y++) {
+              const row = g.rows[y];
+              for (let x = 0; x < row.length; x++) {
+                const val = row[x];
+                if (val !== 0) {
+                  ctx.fillStyle = palette[val] || '#ffffff';
+                  ctx.fillRect((curX + x) * scale, (curY + y) * scale, scale, scale);
+                }
+              }
+            }
+            curX += g.width + track;
+          } else if (line[i] === ' ') {
+            curX += Math.max(Math.floor(maxW / 2), 4) + track;
+          } else {
+            curX += maxW + track;
+          }
+        }
+        curY += lineH;
+      });
+    }
+
+    // Event listeners
+    // Scheme switcher
+    document.querySelectorAll('.fnt-scheme-pill').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        currentScheme = e.currentTarget.dataset.scheme;
+        document.querySelectorAll('.fnt-scheme-pill').forEach(b => b.classList.toggle('active', b.dataset.scheme === currentScheme));
+        updateActionUrls();
+        renderSandbox();
+      });
+    });
+
+    // Sandbox input
+    const inputEl = document.getElementById('fntSandboxInput');
+    if (inputEl) {
+      inputEl.addEventListener('input', (e) => {
+        typedText = e.target.value;
+        renderSandbox();
+      });
+    }
+
+    // Presets
+    document.querySelectorAll('.fnt-preset-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        typedText = (e.currentTarget.dataset.preset || '').replace(/\\n/g, '\n');
+        if (inputEl) inputEl.value = typedText;
+        renderSandbox();
+      });
+    });
+
+    // Export rendered text
+    const exportTextBtn = document.getElementById('fntExportTextBtn');
+    if (exportTextBtn) {
+      exportTextBtn.addEventListener('click', () => {
+        const canvas = document.getElementById('fntSandboxCanvas');
+        if (canvas) {
+          const a = document.createElement('a');
+          a.download = `${baseName}_text_render.png`;
+          a.href = canvas.toDataURL('image/png');
+          a.click();
+        }
+      });
+    }
+
+    // Controls listeners: Zoom, Tracking, Line Spacing
+    el.interactiveControls.querySelectorAll('[data-fzoom]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        zoomLevel = parseInt(e.currentTarget.dataset.fzoom);
+        el.interactiveControls.querySelectorAll('[data-fzoom]').forEach(b => b.classList.toggle('active', parseInt(b.dataset.fzoom) === zoomLevel));
+        renderSandbox();
+      });
+    });
+
+    const trackingSlider = document.getElementById('fntTrackingSlider');
+    if (trackingSlider) {
+      trackingSlider.addEventListener('input', (e) => {
+        letterSpacing = parseInt(e.target.value);
+        const valEl = document.getElementById('fntTrackingVal');
+        if (valEl) valEl.textContent = `${letterSpacing >= 0 ? '+' : ''}${letterSpacing}px`;
+        renderSandbox();
+      });
+    }
+
+    const lineSpacingSlider = document.getElementById('fntLineSpacingSlider');
+    if (lineSpacingSlider) {
+      lineSpacingSlider.addEventListener('input', (e) => {
+        lineSpacing = parseInt(e.target.value);
+        const valEl = document.getElementById('fntLineSpacingVal');
+        if (valEl) valEl.textContent = `+${lineSpacing}px`;
+        renderSandbox();
+      });
+    }
+
+    // Initial render
+    renderSandbox();
+  }
+
+  // 7. Raw File Fallback / Empty State for unsupported preview types (.TIM, .MSC, .ADV, etc.)
   function renderRawViewer(asset, details) {
     const exportUrl = `/api/asset/export?pak=${encodeURIComponent(asset.pak_name)}&name=${encodeURIComponent(asset.name)}`;
     const typeInfo = details.file_type_info || {};
-    const rawMeta = details.raw_inspection || {};
+    const typeName = details.type_name || typeInfo.name || asset.ext;
+    const typeDesc = details.description || typeInfo.description || `Raw Westwood file stored in ${asset.pak_name}. Size: ${formatBytes(asset.size)}.`;
+    const icon = details.type_icon || typeInfo.icon || (asset.ext === '.TIM' ? '⏱️' : '📁');
 
     el.viewerActions.innerHTML = `
       <a href="${exportUrl}" download="${asset.name}" class="btn btn-primary glow-btn">
@@ -1733,155 +4122,24 @@
       </a>
     `;
 
-    el.metaChips.innerHTML = `
-      <div class="meta-chip">Type: <strong>${typeInfo.name || asset.ext}</strong></div>
-      <div class="meta-chip">Archive: <strong>${asset.pak_name}</strong></div>
-      <div class="meta-chip">Size: <strong>${formatBytes(asset.size)}</strong></div>
-      <div class="meta-chip">Offset: <strong>0x${asset.offset.toString(16).toUpperCase()}</strong></div>
-    `;
-
-    // Build spec cards
-    let specCardsHtml = `
-      <div class="inspector-card">
-        <span class="inspector-card-label">Archive Origin</span>
-        <span class="inspector-card-val">${asset.pak_name}</span>
-        <span class="inspector-card-sub">Offset: 0x${asset.offset.toString(16).toUpperCase()}</span>
-      </div>
-      <div class="inspector-card">
-        <span class="inspector-card-label">Byte Size</span>
-        <span class="inspector-card-val">${formatBytes(asset.size)}</span>
-        <span class="inspector-card-sub">${asset.size.toLocaleString()} bytes exact</span>
-      </div>
-    `;
-
-    if (rawMeta.container) {
-      specCardsHtml += `
-        <div class="inspector-card">
-          <span class="inspector-card-label">Container Format</span>
-          <span class="inspector-card-val">${rawMeta.container}</span>
-          <span class="inspector-card-sub">${rawMeta.form_type ? `Form ID: ${rawMeta.form_type}` : 'IFF Resource'}</span>
-        </div>
-      `;
-    }
-
-    if (rawMeta.compression_type) {
-      specCardsHtml += `
-        <div class="inspector-card">
-          <span class="inspector-card-label">Compression</span>
-          <span class="inspector-card-val">${rawMeta.compression_type}</span>
-          <span class="inspector-card-sub">Uncompressed: ${formatBytes(rawMeta.decompressed_size || 0)} (${rawMeta.compression_ratio || ''})</span>
-        </div>
-      `;
-    }
-
-    if (rawMeta.mask_resolution) {
-      specCardsHtml += `
-        <div class="inspector-card">
-          <span class="inspector-card-label">Mask Resolution</span>
-          <span class="inspector-card-val">${rawMeta.mask_resolution}</span>
-          <span class="inspector-card-sub">Action/Hotspot Collision Grid</span>
-        </div>
-      `;
-    }
-
-    if (rawMeta.timeline_opcodes_count !== undefined) {
-      specCardsHtml += `
-        <div class="inspector-card">
-          <span class="inspector-card-label">Timeline Sequence</span>
-          <span class="inspector-card-val">${rawMeta.timeline_opcodes_count} Opcodes</span>
-          <span class="inspector-card-sub">Audio/Visual Animation Keyframes</span>
-        </div>
-      `;
-    }
-
-    if (rawMeta.copyright) {
-      specCardsHtml += `
-        <div class="inspector-card">
-          <span class="inspector-card-label">Driver Signature</span>
-          <span class="inspector-card-val" style="font-size:0.88rem;">${rawMeta.copyright}</span>
-          <span class="inspector-card-sub">Miles Sound System Driver</span>
-        </div>
-      `;
-    }
-
-    // Format chunks list if IFF
-    let chunksHtml = '';
-    if (rawMeta.chunks && rawMeta.chunks.length > 0) {
-      const pills = rawMeta.chunks.map(c => `
-        <span class="chunk-badge-pill">
-          <span>${c.id}</span>
-          <span class="chunk-badge-size">${formatBytes(c.size)}</span>
-        </span>
-      `).join('');
-      chunksHtml = `
-        <div class="inspector-card" style="grid-column: 1 / -1;">
-          <span class="inspector-card-label">IFF Resource Chunks (${rawMeta.chunks.length})</span>
-          <div class="chunk-badges-wrap">${pills}</div>
-        </div>
-      `;
-    }
-
-    // Format Hex / ASCII dump
-    let hexDumpRows = '';
-    if (rawMeta.hex_preview && rawMeta.ascii_preview) {
-      const hex = rawMeta.hex_preview;
-      const asc = rawMeta.ascii_preview;
-      const bytesPerLine = 16;
-      for (let i = 0; i < asc.length; i += bytesPerLine) {
-        const offsetHex = i.toString(16).padStart(4, '0').toUpperCase();
-        const hexSub = hex.slice(i * 2, (i + bytesPerLine) * 2);
-        const bytePairs = [];
-        for (let j = 0; j < hexSub.length; j += 2) {
-          bytePairs.push(hexSub.substr(j, 2).toUpperCase());
-        }
-        const hexFormatted = bytePairs.join(' ').padEnd(48, ' ');
-        const asciiSub = asc.slice(i, i + bytesPerLine);
-        hexDumpRows += `<span class="addr">${offsetHex}:</span>  <span class="bytes">${hexFormatted}</span>  <span class="ascii">${escapeHtml(asciiSub)}</span>\n`;
-      }
-    }
-
     el.viewerStage.innerHTML = `
-      <div class="inspector-stage">
-        <div class="inspector-hero">
-          <div class="inspector-hero-icon">${details.type_icon || '📁'}</div>
-          <div class="inspector-hero-info">
-            <span class="inspector-hero-subtitle">${details.type_name || asset.ext + ' Asset'}</span>
-            <h2 class="inspector-hero-title">${asset.name}</h2>
-            <p class="inspector-hero-desc">${details.description || 'Westwood Studios proprietary game file.'}</p>
-          </div>
-        </div>
-
-        <div class="inspector-grid">
-          ${specCardsHtml}
-          ${chunksHtml}
-        </div>
-
-        ${hexDumpRows ? `
-          <div class="hex-terminal">
-            <div class="hex-terminal-header">
-              <span class="hex-terminal-title">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="4 17 10 11 4 5"></polyline>
-                  <line x1="12" y1="19" x2="20" y2="19"></line>
-                </svg>
-                Binary Header Inspection (First ${rawMeta.ascii_preview ? rawMeta.ascii_preview.length : 256} Bytes)
-              </span>
-              <button class="btn btn-sm btn-secondary" id="copyHexBtn" title="Copy raw hex stream">Copy Hex</button>
-            </div>
-            <pre class="hex-dump-code">${hexDumpRows}</pre>
-          </div>
-        ` : ''}
+      <div class="empty-state">
+        <div class="empty-icon">${icon}</div>
+        <h3>${escapeHtml(asset.name)}</h3>
+        <p>${escapeHtml(typeDesc)}</p>
       </div>
     `;
 
-    const copyBtn = document.getElementById('copyHexBtn');
-    if (copyBtn && rawMeta.hex_preview) {
-      copyBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText(rawMeta.hex_preview).then(() => {
-          showNotification('Hex stream copied to clipboard!');
-        });
-      });
-    }
+    el.metaChips.innerHTML = `
+      <div class="meta-chip">Type: <strong>${escapeHtml(typeName)}</strong></div>
+      ${(details.is_non_useful || asset.is_non_useful) ? `
+      <div class="meta-chip" style="background: rgba(239, 68, 68, 0.14); border-color: rgba(239, 68, 68, 0.4); color: #fca5a5;">
+        Status: <strong>Hidden by default (Non-useful)</strong>
+      </div>` : ''}
+      <div class="meta-chip">Archive: <strong>${escapeHtml(asset.pak_name)}</strong></div>
+      <div class="meta-chip">Size: <strong>${formatBytes(asset.size)}</strong></div>
+      <div class="meta-chip">Offset: <strong>0x${(asset.offset || 0).toString(16).toUpperCase()}</strong></div>
+    `;
 
     el.interactiveControls.innerHTML = '';
   }
@@ -1910,112 +4168,48 @@
     state.modelPlaying = false;
     clearInterval(state.animTimer);
     state.animPlaying = false;
+    clearInterval(state.cpsAnimTimer);
+    state.cpsAnimTimer = null;
     cancelAnimationFrame(state.audioVisualizerTimer);
 
-    if (el.panSlidersBar) {
-      el.panSlidersBar.style.display = 'none';
-    }
+    document.querySelectorAll('audio').forEach(a => {
+      try {
+        a.pause();
+        a.currentTime = 0;
+      } catch (e) {}
+    });
+
     if (el.viewerStage) {
       el.viewerStage.classList.remove('can-pan');
     }
   }
 
-  // Pan Sliders & Viewport Navigation
-  function setupPanSliders() {
-    const stage = el.viewerStage;
-    if (!stage || !el.panSlidersBar) return;
-
-    // Horizontal range input
-    el.panXSlider.addEventListener('input', (e) => {
-      const maxX = stage.scrollWidth - stage.clientWidth;
-      if (maxX > 0) {
-        stage.scrollLeft = (parseFloat(e.target.value) / 100) * maxX;
-      }
-    });
-
-    // Vertical range input
-    el.panYSlider.addEventListener('input', (e) => {
-      const maxY = stage.scrollHeight - stage.clientHeight;
-      if (maxY > 0) {
-        stage.scrollTop = (parseFloat(e.target.value) / 100) * maxY;
-      }
-    });
-
-    // Edge navigation buttons
-    el.panLeftBtn.addEventListener('click', () => {
-      stage.scrollTo({ left: 0, behavior: 'smooth' });
-    });
-    el.panRightBtn.addEventListener('click', () => {
-      stage.scrollTo({ left: stage.scrollWidth - stage.clientWidth, behavior: 'smooth' });
-    });
-    el.panTopBtn.addEventListener('click', () => {
-      stage.scrollTo({ top: 0, behavior: 'smooth' });
-    });
-    el.panBottomBtn.addEventListener('click', () => {
-      stage.scrollTo({ top: stage.scrollHeight - stage.clientHeight, behavior: 'smooth' });
-    });
-    el.panCenterBtn.addEventListener('click', () => {
-      stage.scrollTo({
-        left: Math.max(0, (stage.scrollWidth - stage.clientWidth) / 2),
-        top: Math.max(0, (stage.scrollHeight - stage.clientHeight) / 2),
-        behavior: 'smooth'
-      });
-    });
-
-    // Sync sliders on stage scroll
-    stage.addEventListener('scroll', () => {
-      if (el.panSlidersBar.style.display === 'none') return;
-      const maxX = stage.scrollWidth - stage.clientWidth;
-      const maxY = stage.scrollHeight - stage.clientHeight;
-      if (maxX > 0 && document.activeElement !== el.panXSlider) {
-        el.panXSlider.value = Math.round((stage.scrollLeft / maxX) * 100);
-      }
-      if (maxY > 0 && document.activeElement !== el.panYSlider) {
-        el.panYSlider.value = Math.round((stage.scrollTop / maxY) * 100);
-      }
-    });
-
+  // Viewport Scroll & Navigation Setup
+  function setupViewportNavigation() {
     window.addEventListener('resize', () => {
-      if (state.selectedAsset && state.selectedAsset.ext === '.CPS') {
-        updatePanSliders();
+      if (typeof state.reapplyZoom === 'function') {
+        state.reapplyZoom();
       }
+      updateViewportScrollState();
     });
+
+    if (window.ResizeObserver && el.viewerStage) {
+      const ro = new ResizeObserver(() => {
+        if (typeof state.reapplyZoom === 'function') {
+          state.reapplyZoom();
+        }
+        updateViewportScrollState();
+      });
+      ro.observe(el.viewerStage);
+    }
   }
 
-  function updatePanSliders() {
+  function updateViewportScrollState() {
     const stage = el.viewerStage;
-    if (!stage || !el.panSlidersBar) return;
-    if (!state.selectedAsset || state.selectedAsset.ext !== '.CPS') {
-      el.panSlidersBar.style.display = 'none';
-      stage.classList.remove('can-pan');
-      return;
-    }
-
+    if (!stage) return;
     requestAnimationFrame(() => {
-      const maxX = stage.scrollWidth - stage.clientWidth;
-      const maxY = stage.scrollHeight - stage.clientHeight;
-      const hasOverflowX = maxX > 6;
-      const hasOverflowY = maxY > 6;
-      const hasOverflow = hasOverflowX || hasOverflowY;
-
-      if (hasOverflow) {
-        el.panSlidersBar.style.display = 'block';
-        const panXGroup = document.getElementById('panXGroup');
-        const panYGroup = document.getElementById('panYGroup');
-        if (panXGroup) panXGroup.style.display = hasOverflowX ? 'flex' : 'none';
-        if (panYGroup) panYGroup.style.display = hasOverflowY ? 'flex' : 'none';
-
-        if (hasOverflowX) {
-          el.panXSlider.value = maxX > 0 ? Math.round((stage.scrollLeft / maxX) * 100) : 0;
-        }
-        if (hasOverflowY) {
-          el.panYSlider.value = maxY > 0 ? Math.round((stage.scrollTop / maxY) * 100) : 0;
-        }
-        stage.classList.add('can-pan');
-      } else {
-        el.panSlidersBar.style.display = 'none';
-        stage.classList.remove('can-pan');
-      }
+      const hasOverflow = (stage.scrollWidth - stage.clientWidth > 6) || (stage.scrollHeight - stage.clientHeight > 6);
+      stage.classList.toggle('can-pan', hasOverflow);
     });
   }
 
@@ -2187,6 +4381,136 @@
   function toHex(n) {
     const h = n.toString(16);
     return h.length === 1 ? '0' + h : h;
+  }
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function showToast(message, type = 'info', duration = 2800) {
+    const container = el.toastContainer || document.getElementById('toastContainer');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    const icon = type === 'success' ? '✓' : (type === 'error' ? '⚠️' : 'ℹ️');
+    toast.innerHTML = `<span class="toast-icon">${icon}</span><span>${escapeHtml(message)}</span>`;
+    container.appendChild(toast);
+
+    setTimeout(() => {
+      toast.classList.add('toast-fadeout');
+      setTimeout(() => toast.remove(), 250);
+    }, duration);
+  }
+
+  function scrollActiveCardIntoView() {
+    const activeCard = el.assetList.querySelector('.asset-card.active');
+    if (activeCard) {
+      activeCard.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }
+
+  function handleGlobalKeydown(e) {
+    // If user is typing in a textarea or input, do not trigger navigation shortcuts
+    const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+    const isEditing = activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select';
+
+    // Escape closes modals or blurs search
+    if (e.key === 'Escape') {
+      if (el.helpModal && el.helpModal.style.display !== 'none') {
+        el.helpModal.style.display = 'none';
+        return;
+      }
+      if (el.featuredModal && el.featuredModal.style.display !== 'none') {
+        el.featuredModal.style.display = 'none';
+        return;
+      }
+      if (el.exportModal && el.exportModal.style.display !== 'none') {
+        el.exportModal.style.display = 'none';
+        return;
+      }
+      if (el.dirModal && el.dirModal.style.display !== 'none') {
+        el.dirModal.style.display = 'none';
+        return;
+      }
+      if (isEditing) {
+        document.activeElement.blur();
+        return;
+      }
+    }
+
+    // Help shortcut (?)
+    if (e.key === '?' && !isEditing) {
+      if (el.helpModal) {
+        el.helpModal.style.display = el.helpModal.style.display === 'none' ? 'flex' : 'none';
+        e.preventDefault();
+      }
+      return;
+    }
+
+    // Search focus shortcut (/)
+    if (e.key === '/' && !isEditing) {
+      if (el.searchInput) {
+        e.preventDefault();
+        el.searchInput.focus();
+        el.searchInput.select();
+      }
+      return;
+    }
+
+    if (isEditing) return;
+
+    // Arrow Up / Down asset navigation
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!state.assets || state.assets.length === 0) return;
+      e.preventDefault();
+      const currIdx = state.selectedAsset
+        ? state.assets.findIndex(a => a.name === state.selectedAsset.name && a.pak_name === state.selectedAsset.pak_name)
+        : -1;
+
+      let nextIdx = 0;
+      if (e.key === 'ArrowDown') {
+        nextIdx = currIdx < state.assets.length - 1 ? currIdx + 1 : currIdx;
+      } else {
+        nextIdx = currIdx > 0 ? currIdx - 1 : 0;
+      }
+
+      if (nextIdx !== currIdx && state.assets[nextIdx]) {
+        selectAsset(state.assets[nextIdx]);
+        scrollActiveCardIntoView();
+      }
+      return;
+    }
+
+    // Spacebar to play/pause active player
+    if (e.key === ' ' || e.code === 'Space') {
+      const playBtn = document.getElementById('playPauseBtn')
+        || document.getElementById('modelPlayBtn')
+        || document.getElementById('midiPlayBtn')
+        || document.getElementById('vocPlayBtn');
+      if (playBtn) {
+        e.preventDefault();
+        playBtn.click();
+      }
+      return;
+    }
+
+    // Zoom shortcuts (1, 2, 3, 4)
+    if (['1', '2', '3', '4'].includes(e.key)) {
+      const targetZoom = e.key;
+      const zoomBtn = document.querySelector(`.zoom-btn[data-zoom="${targetZoom}"]`)
+        || document.querySelector(`.ctrl-btn[data-fzoom="${targetZoom}"]`);
+      if (zoomBtn) {
+        e.preventDefault();
+        zoomBtn.click();
+        showToast(`Zoom scale set to ${targetZoom}x`, 'info', 1500);
+      }
+    }
   }
 
   // Run on DOM load
